@@ -195,13 +195,53 @@ export function allocationBuckets(
   return { alloc, total };
 }
 
+export type IncomeKind = "COUPON" | "RENT" | "DIVIDEND" | "AMORT" | "OTHER";
+
+export const INCOME_KIND_META: Record<
+  IncomeKind,
+  { label: string; color: string }
+> = {
+  COUPON: { label: "Cupón", color: "#ff6d00" },
+  RENT: { label: "Alquiler", color: "#22c55e" },
+  DIVIDEND: { label: "Dividendo", color: "#3b82f6" },
+  AMORT: { label: "Amortización", color: "#a855f7" },
+  OTHER: { label: "Otros", color: "#eab308" },
+};
+
+export const INCOME_KINDS: IncomeKind[] = [
+  "COUPON",
+  "RENT",
+  "DIVIDEND",
+  "AMORT",
+  "OTHER",
+];
+
 export type ProjectedEvent = {
   date: string;
   name: string;
   amountUsd: number;
   frequency: string;
   assetId: string;
+  kind: IncomeKind;
 };
+
+/** Infer income kind from free-text name / tx type. */
+export function inferIncomeKind(
+  name: string,
+  txType?: string | null,
+): IncomeKind {
+  const t = (txType || "").toUpperCase();
+  if (t === "COUPON") return "COUPON";
+  if (t === "RENT") return "RENT";
+  if (t === "DIVIDEND") return "DIVIDEND";
+  if (t === "SELL") return "AMORT";
+  const n = (name || "").toLowerCase();
+  if (/cup[oó]n|coupon|interes|interés/.test(n)) return "COUPON";
+  if (/alquiler|rent|rental/.test(n)) return "RENT";
+  if (/dividend|dividendo/.test(n)) return "DIVIDEND";
+  if (/amort|principal|capital/.test(n)) return "AMORT";
+  return "OTHER";
+}
 
 function addMonths(iso: string, months: number): string {
   const d = new Date(iso + "T12:00:00Z");
@@ -256,6 +296,7 @@ export function projectRecurring(
         amountUsd: toUsd(r.amount, r.currency, fxAvg),
         frequency: r.frequency,
         assetId: r.assetId,
+        kind: inferIncomeKind(r.name),
       });
       cursor = stepFrequency(cursor, r.frequency);
       guard += 1;
@@ -292,6 +333,7 @@ export function projectScheduledTxs(
       amountUsd,
       frequency: "SCHEDULED",
       assetId: t.assetId || "",
+      kind: inferIncomeKind(t.description, t.type),
     });
   }
   return out;
@@ -340,6 +382,54 @@ export function monthlyProjectionBuckets(events: ProjectedEvent[], months = 12) 
     if (b) b.total += e.amountUsd;
   }
   return buckets;
+}
+
+export type MonthStackRow = {
+  key: string;
+  label: string;
+  total: number;
+  COUPON: number;
+  RENT: number;
+  DIVIDEND: number;
+  AMORT: number;
+  OTHER: number;
+};
+
+/** Monthly projection stacked by income kind (for colored bar charts). */
+export function monthlyProjectionStacked(
+  events: ProjectedEvent[],
+  months = 12,
+): MonthStackRow[] {
+  const today = new Date();
+  const buckets: MonthStackRow[] = [];
+  for (let i = 0; i < months; i++) {
+    const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + i, 1));
+    const key = d.toISOString().slice(0, 7);
+    buckets.push({
+      key,
+      label: key.slice(5) + "/" + key.slice(2, 4),
+      total: 0,
+      COUPON: 0,
+      RENT: 0,
+      DIVIDEND: 0,
+      AMORT: 0,
+      OTHER: 0,
+    });
+  }
+  for (const e of events) {
+    const key = e.date.slice(0, 7);
+    const b = buckets.find((x) => x.key === key);
+    if (!b) continue;
+    const kind = e.kind || "OTHER";
+    b[kind] += e.amountUsd;
+    b.total += e.amountUsd;
+  }
+  return buckets;
+}
+
+/** Which kinds actually have non-zero totals (for legend). */
+export function activeIncomeKinds(rows: MonthStackRow[]): IncomeKind[] {
+  return INCOME_KINDS.filter((k) => rows.some((r) => r[k] > 0));
 }
 
 export function nwDelta(snapshots: Snapshot[], currentNw: number) {
@@ -503,6 +593,8 @@ export function computeDashboard(p: Portfolio) {
   const next30 = incomeNextDays(projected, 30);
   const next90 = incomeNextDays(projected, 90);
   const projMonths = monthlyProjectionBuckets(projected, 12);
+  const projStacked = monthlyProjectionStacked(projected, 12);
+  const projKinds = activeIncomeKinds(projStacked);
   const delta = nwDelta(p.snapshots, nw);
   const tx = txTotals(p.transactions, p.fx.average);
   const cashPct = nw > 0 ? (cashUsd / nw) * 100 : 0;
@@ -542,6 +634,8 @@ export function computeDashboard(p: Portfolio) {
     next30,
     next90,
     projMonths,
+    projStacked,
+    projKinds,
     delta,
     tx,
     cashPct,
