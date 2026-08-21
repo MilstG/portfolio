@@ -18,7 +18,7 @@ interface Asset {
   name: string;
   ticker: string | null;
   type: string;
-  quantity: number | null;
+  quantity: number;
   costBasis: number;
   currentValue: number;
   pnlPercent: number;
@@ -75,7 +75,7 @@ export function EditAssetModal({ open, asset, onClose, onSave, onDelete }: EditA
       name: form.name,
       ticker: form.ticker || null,
       type: form.type,
-      quantity: form.quantity ? parseFloat(form.quantity) : null,
+      quantity: form.quantity ? parseFloat(form.quantity) : 1,
       costBasis: cost,
       currentValue: current,
       pnlPercent: Math.round(pnl * 10) / 10,

@@ -52,7 +52,7 @@ export default function AssetsPage() {
 
   const handleAdd = (data: any) => {
     const cost = parseFloat(data.costBasis) || 0;
-    const qty = data.quantity ? parseFloat(data.quantity) : null;
+    const qty = data.quantity ? parseFloat(data.quantity) : 1;
     const newAsset: Asset = {
       id: `new-${Date.now()}`,
       name: data.name,
