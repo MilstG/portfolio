@@ -31,6 +31,8 @@ export type RecurringIncome = {
   nextDate: string;
   notes: string | null;
   accountId: string | null;
+  /** INCOME (default) or EXPENSE — amount always stored positive */
+  direction: "INCOME" | "EXPENSE";
 };
 
 export type Tx = {
@@ -94,6 +96,26 @@ export type AppSettings = {
   hasPin: boolean;
 };
 
+export type TaxLot = {
+  id: string;
+  assetId: string;
+  quantity: number;
+  costPerUnit: number;
+  currency: string;
+  purchasedAt: string;
+  notes: string | null;
+};
+
+export type WatchItem = {
+  id: string;
+  ticker: string;
+  name: string | null;
+  type: string;
+  lastPrice: number | null;
+  currency: string;
+  notes: string | null;
+};
+
 export type Portfolio = {
   assets: Asset[];
   accounts: Account[];
@@ -106,4 +128,6 @@ export type Portfolio = {
   allocTargets: AllocTarget[];
   fxHistory: FxHistoryRow[];
   settings: AppSettings;
+  taxLots: TaxLot[];
+  watchlist: WatchItem[];
 };
