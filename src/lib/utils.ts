@@ -103,3 +103,44 @@ export const TX_TYPES = [
   { value: "SELL", label: "Venta" },
   { value: "TRANSFER", label: "Transferencia" },
 ] as const;
+
+/**
+ * Parse a human-typed amount, returning null when it isn't a number.
+ *
+ * "1.234" is genuinely ambiguous — 1234 grouped es-AR, or 1.234 with three
+ * decimals. An earlier version assumed a dot before three digits was always a
+ * thousands separator, which silently turned a 201.644 coupon into 201,644.
+ * The rule now:
+ *
+ *   both . and ,   -> whichever comes last is the decimal separator
+ *   one kind, once -> that is the decimal separator ("201.644" -> 201.644)
+ *   one kind, many -> grouping ("1.234.567" -> 1234567)
+ */
+export function parseAmount(raw: string | null | undefined): number | null {
+  const cleaned = (raw ?? "").trim().replace(/[^0-9,.-]/g, "");
+  if (!cleaned || !/[0-9]/.test(cleaned)) return null;
+
+  const lastDot = cleaned.lastIndexOf(".");
+  const lastComma = cleaned.lastIndexOf(",");
+  let normalised: string;
+
+  if (lastDot >= 0 && lastComma >= 0) {
+    const decimalIsComma = lastComma > lastDot;
+    normalised = decimalIsComma
+      ? cleaned.replace(/\./g, "").replace(",", ".")
+      : cleaned.replace(/,/g, "");
+  } else if (lastDot >= 0) {
+    normalised =
+      cleaned.split(".").length > 2 ? cleaned.replace(/\./g, "") : cleaned;
+  } else if (lastComma >= 0) {
+    normalised =
+      cleaned.split(",").length > 2
+        ? cleaned.replace(/,/g, "")
+        : cleaned.replace(",", ".");
+  } else {
+    normalised = cleaned;
+  }
+
+  const value = Number(normalised);
+  return Number.isFinite(value) ? value : null;
+}

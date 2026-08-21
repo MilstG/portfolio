@@ -26,8 +26,11 @@ import {
   upsertLiability,
   upsertWatchItem,
 } from "@/lib/server/portfolio";
-import { backfillSnapshots } from "@/lib/server/extra-actions";
-import { formatUsd, toUsd } from "@/lib/utils";
+import {
+  backfillSnapshots,
+  importBondSchedule,
+} from "@/lib/server/extra-actions";
+import { formatUsd, parseAmount, toUsd } from "@/lib/utils";
 
 export const Route = createFileRoute("/settings")({
   loader: () => getPortfolio(),
@@ -52,6 +55,9 @@ function SettingsPage() {
   const [pending, setPending] = useState(false);
   const [snapshotCsv, setSnapshotCsv] = useState("");
   const [snapBusy, setSnapBusy] = useState(false);
+  const [schedCsv, setSchedCsv] = useState("");
+  const [schedReplace, setSchedReplace] = useState(true);
+  const [schedBusy, setSchedBusy] = useState(false);
   const avg =
     ((Number(official) || 0) + (Number(blue) || 0) + (Number(mep) || 0)) / 3;
 
@@ -836,16 +842,12 @@ function SettingsPage() {
                   if (!line || /^fecha|^date/i.test(line)) continue;
                   const [d, v] = line.split(/[,;\t]/);
                   const date = (d || "").trim();
-                  // Tolerate "1.234,56" and "1,234.56" alike: drop thousands
-                  // separators, then normalise the decimal comma.
-                  const num = Number(
-                    (v || "")
-                      .trim()
-                      .replace(/[^0-9,.-]/g, "")
-                      .replace(/\.(?=\d{3}\b)/g, "")
-                      .replace(",", "."),
-                  );
-                  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(num) || num < 0) {
+                  const num = parseAmount(v);
+                  if (
+                    !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+                    num === null ||
+                    num < 0
+                  ) {
                     bad.push(line);
                     continue;
                   }
@@ -877,6 +879,113 @@ function SettingsPage() {
               una fecha repetida pisa el valor anterior
             </span>
           </div>
+        </Monitor>
+
+        <Monitor title="SCHEDULE DE BONOS">
+          <p className="mb-2 font-mono text-[12px] text-muted">
+            Pegá el detalle de pagos: una fila por fecha, con renta y
+            amortización. Cada fila se enlaza al bono por su ticker, que es lo
+            que necesitan YTM, duración y el calendario.
+          </p>
+          <p className="mb-2 font-mono text-[11px] text-subtle">
+            Columnas: <span className="text-fg">ticker,fecha,renta,amort</span>.
+            Acepta el encabezado de DetallePagos
+            (Ticker/Fecha/Renta/Amortizacion/Total) y separadores , ; o tab.
+          </p>
+          <Textarea
+            rows={5}
+            value={schedCsv}
+            onChange={(e) => setSchedCsv(e.target.value)}
+            placeholder={"GYC5O,2026-09-05,214.086,0\nGYC5O,2027-09-05,211.759,9707"}
+            className="mb-2"
+          />
+          <label className="mb-2 flex items-center gap-2 font-mono text-[11px] text-muted">
+            <input
+              type="checkbox"
+              checked={schedReplace}
+              onChange={(e) => setSchedReplace(e.target.checked)}
+              className="size-3 accent-[var(--color-accent)]"
+            />
+            reemplazar el schedule actual de los bonos que aparezcan
+          </label>
+          <Button
+            type="button"
+            disabled={schedBusy || !schedCsv.trim()}
+            onClick={async () => {
+              const rows: {
+                ticker: string;
+                date: string;
+                coupon: number;
+                amort: number;
+              }[] = [];
+              let skipped = 0;
+              const num = (raw: string | undefined) => {
+                const v = parseAmount(raw);
+                return v !== null && v > 0 ? v : 0;
+              };
+              for (const raw of schedCsv.split(/\r?\n/)) {
+                const line = raw.trim();
+                if (!line) continue;
+                const parts = line
+                  .split(/[,;\t]/)
+                  .map((x) => x.trim().replace(/^"|"$/g, ""));
+                if (parts.length < 3) {
+                  skipped++;
+                  continue;
+                }
+                const [ticker, date, renta, amort] = parts;
+                // Header row of a DetallePagos export.
+                if (/^ticker$/i.test(ticker)) continue;
+                if (!ticker || !/^\d{4}-\d{2}-\d{2}$/.test(date || "")) {
+                  skipped++;
+                  continue;
+                }
+                const coupon = num(renta);
+                const am = num(amort);
+                if (coupon === 0 && am === 0) {
+                  skipped++;
+                  continue;
+                }
+                rows.push({ ticker, date, coupon, amort: am });
+              }
+              if (rows.length === 0) {
+                toast.error(
+                  "Ninguna fila válida (formato: GYC5O,2026-09-05,214.09,0)",
+                );
+                return;
+              }
+              setSchedBusy(true);
+              try {
+                const res = await importBondSchedule({
+                  data: { rows, replace: schedReplace },
+                });
+                await router.invalidate();
+                if (res.inserted === 0) {
+                  toast.error(
+                    `Ningún ticker coincide con un bono cargado${res.unknown.length ? `: ${res.unknown.join(", ")}` : ""}`,
+                  );
+                } else {
+                  setSchedCsv("");
+                  toast.success(
+                    `${res.coupons} cupones + ${res.amorts} amortizaciones` +
+                      (res.replaced
+                        ? ` · ${res.replaced} filas viejas eliminadas`
+                        : "") +
+                      (skipped ? ` · ${skipped} línea(s) ignorada(s)` : "") +
+                      (res.unknown.length
+                        ? ` · sin bono: ${res.unknown.join(", ")}`
+                        : ""),
+                  );
+                }
+              } catch {
+                toast.error("No se pudo importar el schedule");
+              } finally {
+                setSchedBusy(false);
+              }
+            }}
+          >
+            {schedBusy ? "Importando…" : "Importar schedule"}
+          </Button>
         </Monitor>
 
         <Monitor title="EXPORT">

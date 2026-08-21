@@ -143,6 +143,138 @@ export const deleteSnapshot = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+/**
+ * Bulk-load a bond payment schedule, linked to the bonds it belongs to.
+ *
+ * The generic CSV importer never set asset_id, so rows imported through it were
+ * orphaned: the projections and every bond metric filter by asset, and an
+ * unlinked payment is invisible to all of them. This resolves each row by
+ * ticker instead.
+ *
+ * Ids are derived from ticker + date + leg, so re-importing a corrected file
+ * updates the same rows rather than duplicating the schedule.
+ */
+export const importBondSchedule = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
+  .validator(
+    z.object({
+      rows: z
+        .array(
+          z.object({
+            ticker: z.string().trim().min(1).max(32),
+            date: z.string().regex(/^\d{4}-\d{2}-\d{2}/),
+            coupon: z.number().finite().nonnegative().default(0),
+            amort: z.number().finite().nonnegative().default(0),
+          }),
+        )
+        .max(5000),
+      /** Clear the existing schedule of the matched bonds before inserting. */
+      replace: z.boolean().default(false),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const sql = await getSql();
+    const bondRows = await sql.query<{ id: string; ticker: string | null }>(
+      `select id, ticker from assets where type = 'BOND' and ticker is not null`,
+    );
+    const byTicker = new Map<string, string>();
+    for (const b of bondRows) {
+      if (b.ticker) byTicker.set(b.ticker.trim().toUpperCase(), b.id);
+    }
+
+    const unknown = new Set<string>();
+    const matched = new Set<string>();
+    const ids: string[] = [];
+    const dates: string[] = [];
+    const descs: string[] = [];
+    const amounts: number[] = [];
+    const types: string[] = [];
+    const assetIds: string[] = [];
+
+    for (const r of data.rows) {
+      const ticker = r.ticker.trim().toUpperCase();
+      const assetId = byTicker.get(ticker);
+      if (!assetId) {
+        unknown.add(ticker);
+        continue;
+      }
+      matched.add(assetId);
+      const date = r.date.slice(0, 10);
+      const slug = ticker.toLowerCase();
+      // A single dated row can carry both legs; they are stored separately so
+      // current yield can exclude principal.
+      if (r.coupon > 0) {
+        ids.push(`pay-${slug}-${date}-renta`);
+        dates.push(date);
+        descs.push(`Cupón ${ticker}`);
+        amounts.push(r.coupon);
+        types.push("COUPON");
+        assetIds.push(assetId);
+      }
+      if (r.amort > 0) {
+        ids.push(`pay-${slug}-${date}-amort`);
+        dates.push(date);
+        descs.push(`Amortización ${ticker}`);
+        amounts.push(r.amort);
+        types.push("AMORT");
+        assetIds.push(assetId);
+      }
+    }
+
+    if (ids.length === 0) {
+      return {
+        inserted: 0,
+        coupons: 0,
+        amorts: 0,
+        replaced: 0,
+        unknown: [...unknown],
+      };
+    }
+
+    // Insert first, prune second. The other order deletes the schedule and
+    // then leaves nothing behind if the insert fails, which is exactly what a
+    // botched import must not do.
+    //
+    // Columns are named explicitly: `select *, 'USD', 'Bonds'` appends the
+    // constants after the unnest columns rather than dropping them into the
+    // currency and category slots, so asset_id ended up as 'Bonds' and tripped
+    // the foreign key.
+    await sql.query(
+      `insert into transactions (id, date, description, amount, currency, type, category, asset_id)
+       select t.id, t.date, t.description, t.amount, 'USD', t.type, 'Bonds', t.asset_id
+       from unnest($1::text[], $2::date[], $3::text[], $4::numeric[], $5::text[], $6::text[])
+         as t(id, date, description, amount, type, asset_id)
+       on conflict (id) do update set
+         date = excluded.date,
+         description = excluded.description,
+         amount = excluded.amount,
+         type = excluded.type,
+         asset_id = excluded.asset_id`,
+      [ids, dates, descs, amounts, types, assetIds],
+    );
+
+    let replaced = 0;
+    if (data.replace) {
+      // `returning` because the shared Sql surface resolves to rows, not a
+      // driver result object with rowCount.
+      const removed = await sql.query<{ id: string }>(
+        `delete from transactions
+         where asset_id = any($1::text[]) and id <> all($2::text[])
+         returning id`,
+        [[...matched], ids],
+      );
+      replaced = removed.length;
+    }
+
+    return {
+      inserted: ids.length,
+      coupons: types.filter((t) => t === "COUPON").length,
+      amorts: types.filter((t) => t === "AMORT").length,
+      replaced,
+      unknown: [...unknown],
+    };
+  });
+
 export const upsertTaxLot = createServerFn({ method: "POST" })
   .middleware([requireAuth])
   .validator(

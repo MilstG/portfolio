@@ -83,6 +83,30 @@ else { console.log('FAIL YTM con amort ->', withAmort.ytm); fail++; }
 const empty = bondMetrics([asset('X',1000)], [], 1, '2026-01-01')[0];
 isNull(empty.ytm, 'sin flujos futuros');
 
+
+// ---- parseAmount ----
+// Un "." antes de 3 digitos se asumia separador de miles, y eso convertia un
+// cupon de 201.644 en 201644 al importar el schedule.
+const { parseAmount } = await server.ssrLoadModule('/src/lib/utils.ts');
+const amt = (raw, expected, label) => {
+  const got = parseAmount(raw);
+  const ok = expected === null ? got === null : (got !== null && Math.abs(got - expected) < 1e-9);
+  console.log(ok ? 'PASS' : 'FAIL', 'parseAmount', JSON.stringify(raw), '->', got, 'esperado', expected);
+  if (!ok) fail++;
+};
+amt('201.644', 201.644, '3 decimales');
+amt('214.086', 214.086, '3 decimales');
+amt('197.26', 197.26, '2 decimales');
+amt('10000', 10000, 'entero');
+amt('1.234.567', 1234567, 'miles con puntos');
+amt('1.234.567,89', 1234567.89, 'miles punto + decimal coma');
+amt('1,234.56', 1234.56, 'miles coma + decimal punto');
+amt('1234,5', 1234.5, 'decimal coma');
+amt('$ 9.905', 9.905, 'simbolo + 3 decimales');
+amt('-500.25', -500.25, 'negativo');
+amt('', null, 'vacio');
+amt('basura', null, 'no numerico');
+
 console.log(fail === 0 ? '\nTODOS OK' : `\n${fail} FALLARON`);
 await server.close();
 process.exit(fail === 0 ? 0 : 1);
