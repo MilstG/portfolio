@@ -104,6 +104,23 @@ const DEFAULT_SPANS: Partial<Record<PanelId, PanelSpan>> = {
   costLadder: 3,
 };
 
+/** Panels off by default: available from the panel menu, but the first-run
+ *  dashboard stays readable instead of rendering all 22 at once. */
+export const DEFAULT_HIDDEN: PanelId[] = [
+  "coupons24",
+  "bondYields",
+  "amorts",
+  "incomeExpense",
+  "allocTarget",
+  "pnlContrib",
+  "drawdown",
+  "correlation",
+  "fxScenario",
+  "rebalance",
+  "costLadder",
+  "goals",
+];
+
 type LayoutState = {
   order: PanelId[];
   hidden: PanelId[];
@@ -113,7 +130,7 @@ type LayoutState = {
 function defaultState(): LayoutState {
   return {
     order: [...DEFAULT_LAYOUT],
-    hidden: [],
+    hidden: [...DEFAULT_HIDDEN],
     spans: { ...DEFAULT_SPANS },
   };
 }

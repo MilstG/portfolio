@@ -31,7 +31,7 @@ function CashPage() {
     (s, a) => s + toUsd(a.balance, a.currency, fx),
     0,
   );
-  const pager = usePager(data.accounts, 10);
+  const pager = usePager(data.accounts, 25);
 
   return (
     <div className="flex flex-col gap-2">

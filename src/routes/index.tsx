@@ -539,7 +539,7 @@ function Dashboard() {
               }
             >
               <div className="h-36">
-                {chart.length >= 1 ? (
+                {chart.length >= 2 ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart
                       data={chart}

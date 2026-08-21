@@ -30,7 +30,7 @@ function AssetsPage() {
     return rows.filter((a) => a.type === filter);
   }, [data.assets, filter]);
 
-  const pager = usePager(list, 10);
+  const pager = usePager(list, 25);
   const fx = data.fx.average;
   const totalUsd = list.reduce(
     (s, a) => s + toUsd(a.currentValue, a.currency, fx),
