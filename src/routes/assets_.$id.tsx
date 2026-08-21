@@ -216,6 +216,9 @@ function AssetDetail() {
           try {
             await deleteAsset({ data: { id: asset.id } });
             toast.success("Eliminado");
+            // Without this the list (and the dashboard behind it) can still be
+            // inside its stale window and show the asset that was just deleted.
+            await router.invalidate();
             await navigate({ to: "/assets" });
           } finally {
             setPending(false);

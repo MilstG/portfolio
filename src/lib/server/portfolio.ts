@@ -475,6 +475,14 @@ export const upsertAsset = createServerFn({ method: "POST" })
       ],
     );
     await writeTodaySnapshot();
+    // Setting a ticker or a contract address and then waiting up to an hour for
+    // the scheduled pass reads as "nothing happened". Refresh in the background
+    // so the value appears on its own; the save does not wait for it.
+    if (PRICED_TYPES.has(data.type) && (data.ticker || data.priceId)) {
+      void runPriceRefresh().catch((err) => {
+        console.error("[prices] refresh tras guardar falló:", err);
+      });
+    }
     return { id };
   });
 
@@ -516,7 +524,6 @@ export const upsertAccount = createServerFn({ method: "POST" })
          currency = excluded.currency,
          balance = excluded.balance,
          notes = excluded.notes,
-         price_id = excluded.price_id,
          updated_at = now()`,
       [
         id,

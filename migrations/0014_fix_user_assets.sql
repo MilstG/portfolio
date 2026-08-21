@@ -22,7 +22,8 @@ set type = 'CEDEAR',
     current_value = 16377,
     price_status = 'LIVE',
     updated_at = now()
-where upper(ticker) = 'ASTS';
+where upper(coalesce(ticker,'')) in ('ASTS','ASTS.BA')
+   or upper(name) like '%SPACEMOBILE%';
 
 update assets
 set type = 'CEDEAR',
@@ -30,9 +31,12 @@ set type = 'CEDEAR',
     current_value = 82133,
     price_status = 'LIVE',
     updated_at = now()
-where upper(ticker) = 'BRKB';
+-- Ticker variants because a holder may have typed the US notation.
+where upper(coalesce(ticker,'')) in ('BRKB','BRK.B','BRK-B','BRKB.BA')
+   or upper(name) like '%BERKSHIRE%';
 
 update assets
 set price_id = 'solana:31k88G5Mq7ptbRDf3AM13HAq6wRQHXHikR8hik7wPygk',
     updated_at = now()
-where upper(ticker) = 'GP' and type = 'CRYPTO';
+where (upper(coalesce(ticker,'')) = 'GP' or upper(name) like '%GRAPHITE%')
+  and type = 'CRYPTO';

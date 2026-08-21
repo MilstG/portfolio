@@ -14,7 +14,7 @@
     "db:migrate": "node scripts/migrate.mjs",
     "prices:refresh": "node scripts/refresh-prices.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/test-returns.mjs",
+    "test": "node scripts/test-returns.mjs && node scripts/test-prices.mjs",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
