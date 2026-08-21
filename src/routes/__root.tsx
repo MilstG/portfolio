@@ -1,6 +1,7 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import { AuthProvider } from "@/lib/auth/provider";
 import { PinGate } from "@/components/pin-gate";
+import { TipProvider } from "@/components/ui/tip";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
 import { Shell } from "@/components/shell";
 import { Toaster } from "sonner";
@@ -14,7 +15,10 @@ export const Route = createRootRoute({
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: APP_NAME },
-      { name: "description", content: "Tracker de patrimonio: crypto, acciones, bonos, real estate y cash." },
+      {
+        name: "description",
+        content: "Tracker de patrimonio: crypto, acciones, bonos, real estate y cash.",
+      },
       { name: "theme-color", content: "#000000" },
     ],
     links: [
@@ -36,12 +40,14 @@ export const Route = createRootRoute({
       <body className="bg-bg text-fg">
         <PreviewHostBridge />
         <AuthProvider>
-          <PinGate>
-            <Shell>
-              <Outlet />
-            </Shell>
-            <Toaster theme="dark" position="bottom-right" />
-          </PinGate>
+          <TipProvider>
+            <PinGate>
+              <Shell>
+                <Outlet />
+              </Shell>
+              <Toaster theme="dark" position="bottom-right" />
+            </PinGate>
+          </TipProvider>
         </AuthProvider>
         <Scripts />
       </body>
