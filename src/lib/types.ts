@@ -30,6 +30,7 @@ export type RecurringIncome = {
   frequency: string;
   nextDate: string;
   notes: string | null;
+  accountId: string | null;
 };
 
 export type Tx = {
@@ -56,6 +57,43 @@ export type Snapshot = {
   totalUsd: number;
 };
 
+export type Liability = {
+  id: string;
+  name: string;
+  type: string;
+  balance: number;
+  currency: string;
+  interestRate: number | null;
+  linkedAssetId: string | null;
+  notes: string | null;
+};
+
+export type Goal = {
+  id: string;
+  name: string;
+  targetUsd: number;
+  targetDate: string | null;
+  notes: string | null;
+};
+
+export type AllocTarget = {
+  assetType: string;
+  targetPct: number;
+};
+
+export type FxHistoryRow = {
+  date: string;
+  official: number;
+  blue: number;
+  mep: number;
+  average: number;
+};
+
+export type AppSettings = {
+  pinEnabled: boolean;
+  hasPin: boolean;
+};
+
 export type Portfolio = {
   assets: Asset[];
   accounts: Account[];
@@ -63,4 +101,9 @@ export type Portfolio = {
   transactions: Tx[];
   snapshots: Snapshot[];
   fx: Fx;
+  liabilities: Liability[];
+  goals: Goal[];
+  allocTargets: AllocTarget[];
+  fxHistory: FxHistoryRow[];
+  settings: AppSettings;
 };
