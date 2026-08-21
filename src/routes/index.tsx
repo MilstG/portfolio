@@ -13,6 +13,7 @@ import {
   YAxis,
 } from "recharts";
 import { Monitor } from "@/components/monitor";
+import { Pager, usePager } from "@/components/pager";
 import { getPortfolio } from "@/lib/server/portfolio";
 import {
   computeDashboard,
@@ -48,6 +49,7 @@ function Dashboard() {
     if (last) last.value = s.nw;
   }
   const chart = snapPts;
+  const holdingsPager = usePager(s.holdings, 10);
 
   return (
     <div className="flex flex-col gap-2">
@@ -67,11 +69,7 @@ function Dashboard() {
           </p>
         </Monitor>
         <Monitor title="P&L">
-          <p
-            className={`font-mono text-xl tabular-nums ${
-              s.pnl >= 0 ? "text-gain" : "text-loss"
-            }`}
-          >
+          <p className={`font-mono text-xl tabular-nums ${s.pnl >= 0 ? "text-gain" : "text-loss"}`}>
             {formatUsd(s.pnl)}
           </p>
           <p className="font-mono text-[10px] text-subtle">
@@ -93,11 +91,7 @@ function Dashboard() {
           <p className="font-mono text-[10px] text-subtle">bruto anual</p>
         </Monitor>
         <Monitor title="CONCENTRATION">
-          <p
-            className={`font-mono text-xl tabular-nums ${
-              s.topWeight >= 30 ? "text-loss" : "text-fg"
-            }`}
-          >
+          <p className={`font-mono text-xl tabular-nums ${s.topWeight >= 30 ? "text-loss" : "text-fg"}`}>
             {s.topWeight.toFixed(0)}%
           </p>
           <p className="truncate font-mono text-[10px] text-muted">
@@ -176,7 +170,9 @@ function Dashboard() {
               <p className="font-mono text-[10px] text-muted">UPCOMING</p>
               {s.projected.slice(0, 4).map((e, i) => (
                 <div key={i} className="flex justify-between font-mono text-[10px]">
-                  <span className="truncate text-subtle">{e.date.slice(5)} · {e.name}</span>
+                  <span className="truncate text-subtle">
+                    {e.date.slice(5)} · {e.name}
+                  </span>
                   <span className="text-gain">{formatUsd(e.amountUsd)}</span>
                 </div>
               ))}
@@ -213,9 +209,9 @@ function Dashboard() {
               </tr>
             </thead>
             <tbody>
-              {s.holdings.map((h, i) => (
+              {holdingsPager.slice.map((h, i) => (
                 <tr key={h.id} className="border-b border-line/50">
-                  <td className="py-1 pr-2 text-subtle">{i + 1}</td>
+                  <td className="py-1 pr-2 text-subtle">{holdingsPager.from + i}</td>
                   <td className="py-1 pr-2">
                     <span className="text-fg">{h.name}</span>
                     {h.ticker ? (
@@ -245,6 +241,15 @@ function Dashboard() {
               ))}
             </tbody>
           </table>
+          <Pager
+            page={holdingsPager.page}
+            totalPages={holdingsPager.totalPages}
+            total={holdingsPager.total}
+            from={holdingsPager.from}
+            to={holdingsPager.to}
+            onChange={holdingsPager.setPage}
+            className="mt-1"
+          />
         </div>
       </Monitor>
 
@@ -292,10 +297,7 @@ function Dashboard() {
               <>
                 <div className="min-h-0 flex-1">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={s.projStacked}
-                      margin={{ top: 4, right: 4, left: 0, bottom: 0 }}
-                    >
+                    <BarChart data={s.projStacked} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
                       <XAxis
                         dataKey="label"
                         tick={{
