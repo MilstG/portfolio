@@ -4,7 +4,12 @@ import { getSql } from "@/lib/db";
 import { requireAuth } from "@/lib/server/auth";
 import { netWorthUsd } from "@/lib/portfolio-math";
 import { ASSET_TYPES, CURRENCIES, FREQUENCIES, TX_TYPES } from "@/lib/utils";
-import { fetchCryptoUsd, fetchStockUsd } from "@/lib/prices";
+import {
+  fetchArgBondFactors,
+  fetchCryptoUsd,
+  fetchDolarRates,
+  fetchStockUsd,
+} from "@/lib/prices";
 import type {
   Account,
   AllocTarget,
@@ -296,6 +301,7 @@ async function loadPortfolioInner(): Promise<Portfolio> {
     settings,
     taxLots: taxLotRows.map(mapTaxLot),
     watchlist: watchRows.map(mapWatch),
+    lastPriceRun: await lastPriceRun(),
   };
 }
 
@@ -352,10 +358,36 @@ const shortText = z.string().trim().max(200);
 const longText = z.string().max(2000);
 const money = z.number().finite();
 
+/**
+ * Kick off a refresh when prices have gone stale, without making the caller
+ * wait for it.
+ *
+ * The marker is written *before* the work starts, so several tabs loading at
+ * once queue one refresh rather than a stampede of outbound calls. The current
+ * response still serves the prices it already had; the next one sees fresh
+ * ones.
+ */
+async function maybeRefreshPricesInBackground(): Promise<void> {
+  const minutes = refreshIntervalMinutes();
+  if (minutes === 0) return;
+  const last = await lastPriceAttempt();
+  if (last) {
+    const age = Date.now() - Date.parse(last);
+    if (Number.isFinite(age) && age < minutes * 60_000) return;
+  }
+  await markPriceRun();
+  void runPriceRefresh().catch((err) => {
+    console.error("[prices] refresh automático falló:", err);
+  });
+}
+
 export const getPortfolio = createServerFn({ method: "GET" })
   .middleware([requireAuth])
   .handler(async () => {
-    return loadPortfolioInner();
+    const portfolio = await loadPortfolioInner();
+    // Deliberately not awaited: a slow upstream must not delay the dashboard.
+    void maybeRefreshPricesInBackground();
+    return portfolio;
   });
 
 export const getAsset = createServerFn({ method: "GET" })
@@ -632,53 +664,174 @@ export const updateFx = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+/* ------------------------------------------------------------ price refresh */
+
+/**
+ * Two markers, deliberately.
+ *
+ * The attempt throttles the automatic trigger, so a source that is down does
+ * not get hammered on every page load. The success is what the footer reports —
+ * marking a run that fetched nothing would show "LIVE · RECIÉN" over prices
+ * that never arrived.
+ */
+const PRICE_RUN_KEY = "last_price_run";
+const PRICE_OK_KEY = "last_price_success";
+
+/** Minutes between automatic refreshes. 0 disables it. */
+function refreshIntervalMinutes(): number {
+  const raw = Number(process.env.PRICE_REFRESH_MINUTES ?? 60);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 60;
+}
+
+async function markMeta(key: string): Promise<void> {
+  try {
+    const sql = await getSql();
+    await sql.query(
+      `insert into app_meta (key, value, updated_at)
+       values ($1, $2, now())
+       on conflict (key) do update set value = excluded.value, updated_at = now()`,
+      [key, new Date().toISOString()],
+    );
+  } catch (err) {
+    console.error("[prices] no se pudo marcar la corrida:", err);
+  }
+}
+
+const markPriceRun = () => markMeta(PRICE_RUN_KEY);
+const markPriceSuccess = () => markMeta(PRICE_OK_KEY);
+
+async function readMeta(key: string): Promise<string | null> {
+  try {
+    const sql = await getSql();
+    const rows = await sql.query<{ value: string }>(
+      `select value from app_meta where key = $1`,
+      [key],
+    );
+    return rows[0]?.value ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Last attempt — throttles the automatic trigger. */
+export const lastPriceAttempt = () => readMeta(PRICE_RUN_KEY);
+/** Last run that actually brought data back — what the footer shows. */
+export const lastPriceRun = () => readMeta(PRICE_OK_KEY);
+
+/**
+ * The refresh itself, callable without going through the server function.
+ *
+ * The automatic trigger runs it in the background from the portfolio loader,
+ * where there is no request to authorise — the manual action keeps the auth
+ * middleware.
+ */
+export async function runPriceRefresh() {
+  const sql = await getSql();
+  const assets =
+    await sql`select id, ticker, type, quantity, current_value from assets`;
+  const cryptoTickers = assets
+    .filter((a) => String(a.type) === "CRYPTO" && a.ticker)
+    .map((a) => String(a.ticker).toUpperCase());
+  const stockTickers = assets
+    .filter((a) => String(a.type) === "STOCK" && a.ticker)
+    .map((a) => String(a.ticker).toUpperCase());
+  const bondTickers = assets
+    .filter((a) => String(a.type) === "BOND" && a.ticker)
+    .map((a) => String(a.ticker).toUpperCase());
+
+  const [crypto, stocks, bondFactors, fx] = await Promise.all([
+    fetchCryptoUsd(cryptoTickers),
+    fetchStockUsd(stockTickers),
+    fetchArgBondFactors(bondTickers),
+    fetchDolarRates(),
+  ]);
+
+  const ids: string[] = [];
+  const values: number[] = [];
+  for (const a of assets) {
+    const ticker = a.ticker ? String(a.ticker).toUpperCase() : null;
+    if (!ticker) continue;
+    const qty = a.quantity == null ? null : num(a.quantity);
+    let unit: number | undefined;
+    if (String(a.type) === "CRYPTO") unit = crypto[ticker];
+    if (String(a.type) === "STOCK") unit = stocks[ticker];
+    // Bond quotes are a factor of face value, so the position is worth
+    // nominal x factor. Without a nominal there is nothing to scale.
+    if (String(a.type) === "BOND") {
+      const factor = bondFactors[ticker];
+      if (factor != null && qty != null && qty > 0) {
+        ids.push(String(a.id));
+        values.push(qty * factor);
+      }
+      continue;
+    }
+    if (unit == null || unit <= 0) continue;
+    ids.push(String(a.id));
+    values.push(qty != null && qty > 0 ? unit * qty : unit);
+  }
+  const updated = ids.length;
+  if (updated > 0) {
+    await sql.query(
+      `update assets a set current_value = v.value, updated_at = now()
+       from unnest($1::text[], $2::numeric[]) as v(id, value)
+      where a.id = v.id`,
+      [ids, values],
+    );
+  }
+  // FX moves the value of every ARS-denominated holding, so it is refreshed
+  // in the same pass and recorded for the history series.
+  if (fx) {
+    const average = (fx.official + fx.blue + fx.mep) / 3;
+    await sql.query(
+      `update fx_rates set official = $1, blue = $2, mep = $3, updated_at = now() where id = 1`,
+      [fx.official, fx.blue, fx.mep],
+    );
+    try {
+      await sql.query(
+        `insert into fx_history (date, official, blue, mep, average)
+         values ($1,$2,$3,$4,$5)
+         on conflict (date) do update set
+           official = excluded.official,
+           blue = excluded.blue,
+           mep = excluded.mep,
+           average = excluded.average`,
+        [
+          new Date().toISOString().slice(0, 10),
+          fx.official,
+          fx.blue,
+          fx.mep,
+          average,
+        ],
+      );
+    } catch (err) {
+      console.error("[fx] no se pudo escribir fx_history:", err);
+    }
+  }
+
+  await markPriceRun();
+  if (updated > 0 || fx) await writeTodaySnapshot();
+  // Counts per source so a silent outage is visible instead of looking like
+  // "nothing changed".
+  return {
+    updated,
+    crypto: Object.keys(crypto).length,
+    cryptoWanted: new Set(cryptoTickers).size,
+    stocks: Object.keys(stocks).length,
+    stocksWanted: new Set(stockTickers).size,
+    bonds: Object.keys(bondFactors).length,
+    bondsWanted: new Set(bondTickers).size,
+    fx: fx != null,
+  };
+}
+
+/** Just the freshness marker, for the shell footer. */
+export const getPriceStatus = createServerFn({ method: "GET" })
+  .middleware([requireAuth])
+  .handler(async () => ({ lastPriceRun: await lastPriceRun() }));
+
 export const refreshPrices = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .handler(async () => {
-    const sql = await getSql();
-    const assets =
-      await sql`select id, ticker, type, quantity, current_value from assets`;
-    const cryptoTickers = assets
-      .filter((a) => String(a.type) === "CRYPTO" && a.ticker)
-      .map((a) => String(a.ticker).toUpperCase());
-    const stockTickers = assets
-      .filter((a) => String(a.type) === "STOCK" && a.ticker)
-      .map((a) => String(a.ticker).toUpperCase());
-
-    const [crypto, stocks] = await Promise.all([
-      fetchCryptoUsd(cryptoTickers),
-      fetchStockUsd(stockTickers),
-    ]);
-
-    const ids: string[] = [];
-    const values: number[] = [];
-    for (const a of assets) {
-      const ticker = a.ticker ? String(a.ticker).toUpperCase() : null;
-      if (!ticker) continue;
-      const qty = a.quantity == null ? null : num(a.quantity);
-      let unit: number | undefined;
-      if (String(a.type) === "CRYPTO") unit = crypto[ticker];
-      if (String(a.type) === "STOCK") unit = stocks[ticker];
-      if (unit == null || unit <= 0) continue;
-      ids.push(String(a.id));
-      values.push(qty != null && qty > 0 ? unit * qty : unit);
-    }
-    const updated = ids.length;
-    if (updated > 0) {
-      await sql.query(
-        `update assets a set current_value = v.value, updated_at = now()
-         from unnest($1::text[], $2::numeric[]) as v(id, value)
-        where a.id = v.id`,
-        [ids, values],
-      );
-    }
-    if (updated > 0) await writeTodaySnapshot();
-    return {
-      updated,
-      crypto: Object.keys(crypto).length,
-      stocks: Object.keys(stocks).length,
-    };
-  });
+  .handler(async () => runPriceRefresh());
 
 export const snapshotNow = createServerFn({ method: "POST" })
   .middleware([requireAuth])

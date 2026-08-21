@@ -130,4 +130,6 @@ export type Portfolio = {
   settings: AppSettings;
   taxLots: TaxLot[];
   watchlist: WatchItem[];
+  /** ISO timestamp of the last price refresh, or null if it never ran. */
+  lastPriceRun: string | null;
 };

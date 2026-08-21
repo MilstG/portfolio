@@ -48,12 +48,51 @@ function useClock() {
   return clock;
 }
 
+/**
+ * The footer said "LIVE" unconditionally, which told the reader nothing about
+ * whether prices were actually fresh. It now reports the last refresh, and goes
+ * amber once the data is a day old.
+ */
+function PriceStatus({ lastPriceRun }: { lastPriceRun: string | null }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  if (!lastPriceRun) return <span className="text-subtle">SIN PRECIOS</span>;
+  const ms = now - Date.parse(lastPriceRun);
+  if (!Number.isFinite(ms)) return <span className="text-subtle">SIN PRECIOS</span>;
+
+  const mins = Math.max(0, Math.round(ms / 60_000));
+  const label =
+    mins < 1
+      ? "RECIÉN"
+      : mins < 60
+        ? `HACE ${mins}M`
+        : mins < 1440
+          ? `HACE ${Math.round(mins / 60)}H`
+          : `HACE ${Math.round(mins / 1440)}D`;
+  const stale = mins >= 1440;
+  return (
+    <span
+      className={stale ? "text-loss" : "text-accent"}
+      title={`Último refresh de precios: ${new Date(lastPriceRun).toLocaleString("es-AR")}`}
+      suppressHydrationWarning
+    >
+      {stale ? "PRECIOS VIEJOS" : "LIVE"} · {label}
+    </span>
+  );
+}
+
 export function Shell({
   children,
   pinEnabled,
+  lastPriceRun,
 }: {
   children: ReactNode;
   pinEnabled: boolean;
+  lastPriceRun: string | null;
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const clock = useClock();
@@ -154,7 +193,7 @@ export function Shell({
 
       <footer className="hidden h-6 items-center justify-between border-t border-border bg-surface px-3 font-mono text-[11px] tracking-wide text-subtle md:flex">
         <span>{"PAT <GO>"}</span>
-        <span className="text-accent">LIVE</span>
+        <PriceStatus lastPriceRun={lastPriceRun} />
         <span>USD BOOK</span>
       </footer>
 

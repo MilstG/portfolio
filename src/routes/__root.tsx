@@ -10,6 +10,7 @@ import { HintsProvider } from "@/components/ui/hints";
 import { Shell } from "@/components/shell";
 import { TipProvider } from "@/components/ui/tip";
 import { getAuthState } from "@/lib/server/auth";
+import { getPriceStatus } from "@/lib/server/portfolio";
 import appCss from "../styles.css?url";
 
 const APP_NAME = "Patrimonio";
@@ -23,7 +24,10 @@ export const Route = createRootRoute({
     const onLogin = location.pathname === LOGIN_PATH;
     if (!auth.authenticated && !onLogin) throw redirect({ to: LOGIN_PATH });
     if (auth.authenticated && onLogin) throw redirect({ to: "/" });
-    return { auth };
+    const priceStatus = auth.authenticated
+      ? await getPriceStatus().catch(() => ({ lastPriceRun: null }))
+      : { lastPriceRun: null };
+    return { auth, priceStatus };
   },
   head: () => ({
     meta: [
@@ -65,7 +69,7 @@ export const Route = createRootRoute({
 });
 
 function RootComponent() {
-  const { auth } = Route.useRouteContext();
+  const { auth, priceStatus } = Route.useRouteContext();
   return (
     <html lang="es" className="antialiased">
       <head>
@@ -75,7 +79,10 @@ function RootComponent() {
         <HintsProvider>
         <TipProvider>
           {auth.authenticated ? (
-            <Shell pinEnabled={auth.pinEnabled}>
+            <Shell
+              pinEnabled={auth.pinEnabled}
+              lastPriceRun={priceStatus.lastPriceRun}
+            >
               <Outlet />
             </Shell>
           ) : (

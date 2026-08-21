@@ -107,6 +107,52 @@ amt('-500.25', -500.25, 'negativo');
 amt('', null, 'vacio');
 amt('basura', null, 'no numerico');
 
+
+// ---- parsers de precios ----
+// No hay red en el sandbox, asi que se testea la forma de la respuesta, que es
+// donde estan los bugs de parseo.
+const px = await server.ssrLoadModule('/src/lib/prices.ts');
+const eq = (got, expected, label) => {
+  const ok = JSON.stringify(got) === JSON.stringify(expected);
+  console.log(ok ? 'PASS' : 'FAIL', label, '->', JSON.stringify(got));
+  if (!ok) { console.log('   esperado', JSON.stringify(expected)); fail++; }
+};
+
+// dolarapi: MEP se llama "bolsa"; se usa el lado vendedor
+eq(px.parseDolarApi([
+  {casa:'oficial', compra:1000, venta:1050},
+  {casa:'blue', compra:1200, venta:1250},
+  {casa:'bolsa', compra:1180, venta:1210},
+  {casa:'contadoconliqui', compra:1300, venta:1320},
+]), {official:1050, blue:1250, mep:1210}, 'dolarapi casas');
+// nombre en vez de casa, y numeros como string
+eq(px.parseDolarApi([
+  {nombre:'Dólar Oficial', venta:'1050.5'},
+  {nombre:'Dólar Blue', venta:'1250'},
+  {nombre:'Dólar MEP', venta:'1210'},
+]), {official:1050.5, blue:1250, mep:1210}, 'dolarapi por nombre');
+// sin MEP -> cae a blue
+eq(px.parseDolarApi([{casa:'oficial',venta:1000},{casa:'blue',venta:1200}]),
+   {official:1000, blue:1200, mep:1200}, 'dolarapi sin MEP');
+// basura
+eq(px.parseDolarApi(null), null, 'dolarapi null');
+eq(px.parseDolarApi([{casa:'blue',venta:1200}]), null, 'dolarapi sin oficial');
+eq(px.parseDolarApi([{casa:'oficial',venta:0},{casa:'blue',venta:-5}]), null, 'dolarapi valores invalidos');
+
+// bluelytics
+eq(px.parseBluelytics({oficial:{value_sell:1050},blue:{value_sell:1250}}),
+   {official:1050, blue:1250, mep:1250}, 'bluelytics');
+eq(px.parseBluelytics({oficial:{value_avg:1040},blue:{value_avg:1240}}),
+   {official:1040, blue:1240, mep:1240}, 'bluelytics value_avg');
+eq(px.parseBluelytics({}), null, 'bluelytics vacio');
+
+// bonos: la cotizacion viene por 100 nominales -> factor
+eq(px.parseBondQuotes([{symbol:'CICAO', c:104.4285}]), {CICAO:1.044285}, 'bono close/100');
+eq(px.parseBondQuotes([{symbol:'gyc5o', px_bid:100, px_ask:104}]), {GYC5O:1.02}, 'bono medio bid/ask');
+eq(px.parseBondQuotes([{symbol:'X', px_bid:98}]), {X:0.98}, 'bono solo bid');
+eq(px.parseBondQuotes([{symbol:'Y'}]), {}, 'bono sin precio');
+eq(px.parseBondQuotes('nada'), {}, 'bono respuesta no-array');
+
 console.log(fail === 0 ? '\nTODOS OK' : `\n${fail} FALLARON`);
 await server.close();
 process.exit(fail === 0 ? 0 : 1);

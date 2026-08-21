@@ -59,9 +59,24 @@ export function CommandPalette({ pinEnabled }: { pinEnabled: boolean }) {
         run: async () => {
           setBusy(true);
           try {
-            await refreshPrices();
+            const r = await refreshPrices();
             await router.invalidate();
-            toast.success("Precios actualizados");
+            // Per-source counts: an upstream that is down should not look
+            // like "nothing changed".
+            const parts = [
+              r.cryptoWanted ? `crypto ${r.crypto}/${r.cryptoWanted}` : null,
+              r.stocksWanted ? `acciones ${r.stocks}/${r.stocksWanted}` : null,
+              r.bondsWanted ? `bonos ${r.bonds}/${r.bondsWanted}` : null,
+              r.fx ? "FX ok" : "FX sin datos",
+            ].filter(Boolean);
+            const failed =
+              r.crypto < r.cryptoWanted ||
+              r.stocks < r.stocksWanted ||
+              r.bonds < r.bondsWanted ||
+              !r.fx;
+            const msg = `${r.updated} activo(s) · ${parts.join(" · ")}`;
+            if (failed) toast.warning(msg);
+            else toast.success(msg);
           } catch {
             toast.error("No se pudieron actualizar los precios");
           } finally {

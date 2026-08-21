@@ -12,6 +12,7 @@
     "preview": "vite preview",
     "start": "node scripts/migrate.mjs && node .output/server/index.mjs",
     "db:migrate": "node scripts/migrate.mjs",
+    "prices:refresh": "node scripts/refresh-prices.mjs",
     "typecheck": "tsc --noEmit",
     "test": "node scripts/test-returns.mjs",
     "lint": "eslint .",
