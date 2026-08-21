@@ -1,11 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { assets } from "@/lib/mock-data";
+import { assets as initialAssets } from "@/lib/mock-data";
 import { formatUSD, formatPercent, cn } from "@/lib/utils";
-import { Bitcoin, BarChart3, Building2, Landmark, Eye, Plus } from "lucide-react";
+import { Bitcoin, BarChart3, Building2, Landmark, Eye, Plus, Pencil } from "lucide-react";
 import Link from "next/link";
 import { AddAssetModal } from "@/components/AddAssetModal";
+import { EditAssetModal } from "@/components/EditAssetModal";
 
 const filters = ["All", "CRYPTO", "STOCK", "BOND", "REAL_ESTATE"] as const;
 
@@ -30,12 +31,41 @@ const typeIcons: Record<string, React.ReactNode> = {
   REAL_ESTATE: <Building2 className="h-4 w-4" />,
 };
 
+type Asset = (typeof initialAssets)[0];
+
 export default function AssetsPage() {
+  const [assets, setAssets] = useState<Asset[]>(initialAssets);
   const [filter, setFilter] = useState<(typeof filters)[number]>("All");
   const [showAdd, setShowAdd] = useState(false);
+  const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
 
   const filtered = filter === "All" ? assets : assets.filter((a) => a.type === filter);
   const totalValue = filtered.reduce((sum, a) => sum + a.currentValue, 0);
+
+  const handleSave = (updated: Asset) => {
+    setAssets((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
+  };
+
+  const handleDelete = (id: string) => {
+    setAssets((prev) => prev.filter((a) => a.id !== id));
+  };
+
+  const handleAdd = (data: any) => {
+    const cost = parseFloat(data.costBasis) || 0;
+    const qty = data.quantity ? parseFloat(data.quantity) : null;
+    const newAsset: Asset = {
+      id: `new-${Date.now()}`,
+      name: data.name,
+      ticker: data.ticker || null,
+      type: data.type,
+      quantity: qty,
+      costBasis: cost,
+      currentValue: cost,
+      pnlPercent: 0,
+      currency: data.currency || "USD",
+    };
+    setAssets((prev) => [...prev, newAsset]);
+  };
 
   return (
     <div className="p-8">
@@ -88,17 +118,24 @@ export default function AssetsPage() {
                 <td className="px-4 py-4 text-right text-zinc-400">{formatUSD(asset.costBasis)}</td>
                 <td className={cn("px-4 py-4 text-right font-medium", asset.pnlPercent >= 0 ? "text-emerald-400" : "text-red-400")}>{formatPercent(asset.pnlPercent)}</td>
                 <td className="px-6 py-4 text-right">
-                  <Link href={`/assets/${asset.id}`} className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-700 hover:text-white">
-                    <Eye className="h-3.5 w-3.5" /> Ver
-                  </Link>
+                  <div className="flex items-center justify-end gap-2">
+                    <button onClick={() => setEditingAsset(asset)} className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-700 hover:text-white">
+                      <Pencil className="h-3.5 w-3.5" /> Editar
+                    </button>
+                    <Link href={`/assets/${asset.id}`} className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-700 hover:text-white">
+                      <Eye className="h-3.5 w-3.5" /> Ver
+                    </Link>
+                  </div>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
+        {filtered.length === 0 && <div className="py-16 text-center text-sm text-zinc-500">No hay assets en esta categoría</div>}
       </div>
 
-      <AddAssetModal open={showAdd} onClose={() => setShowAdd(false)} />
+      <AddAssetModal open={showAdd} onClose={() => setShowAdd(false)} onSave={handleAdd} />
+      <EditAssetModal open={!!editingAsset} asset={editingAsset} onClose={() => setEditingAsset(null)} onSave={handleSave} onDelete={handleDelete} />
     </div>
   );
 }
