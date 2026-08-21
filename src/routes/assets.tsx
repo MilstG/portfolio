@@ -1,177 +1,132 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { Eye, Pencil, Plus, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { Plus, Trash2 } from "lucide-react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { AssetForm } from "@/components/asset-form";
 import { ConfirmDelete } from "@/components/confirm-delete";
-import { Pager, usePager } from "@/components/pager";
+import { Pager, usePager } from "@/components/ui/pager";
 import { Button } from "@/components/ui/button";
 import { deleteAsset, getPortfolio, upsertAsset } from "@/lib/server/portfolio";
-import type { Asset } from "@/lib/types";
-import { ASSET_TYPES, cn, formatPct, formatUsd, toUsd } from "@/lib/utils";
+import { ASSET_TYPES, formatUsd } from "@/lib/utils";
 
 export const Route = createFileRoute("/assets")({
   loader: () => getPortfolio(),
   component: AssetsPage,
 });
 
-export default function AssetsPage() {
+function AssetsPage() {
   const data = Route.useLoaderData();
   const router = useRouter();
-  const [filter, setFilter] = useState("ALL");
-  const [editing, setEditing] = useState<Asset | null | "new">(null);
-  const [deleting, setDeleting] = useState<Asset | null>(null);
+  const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
+  const [delId, setDelId] = useState<string | null>(null);
+  const [filter, setFilter] = useState<string>("ALL");
 
-  const list =
-    filter === "ALL" ? data.assets : data.assets.filter((a) => a.type === filter);
-  const total = list.reduce((s, a) => s + toUsd(a.currentValue, a.currency, data.fx.average), 0);
+  const list = useMemo(() => {
+    const rows = data.assets;
+    if (filter === "ALL") return rows;
+    return rows.filter((a) => a.type === filter);
+  }, [data.assets, filter]);
+
   const pager = usePager(list, 10);
 
-  async function refresh() {
-    await router.invalidate();
-  }
-
   return (
-    <div>
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-baseline gap-3">
-          <h1 className="font-mono text-sm tracking-widest text-accent">POS</h1>
-          <p className="font-mono text-xs text-muted">
-            {list.length} · {formatUsd(total)}
-          </p>
-        </div>
-        <Button onClick={() => setEditing("new")}>
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h1 className="font-mono text-sm tracking-widest text-accent">POS</h1>
+        <Button onClick={() => setOpen(true)}>
           <Plus className="size-3.5" /> ADD
         </Button>
       </div>
 
-      <div className="mb-2 flex flex-wrap">
+      <div className="flex flex-wrap gap-1">
         {[{ value: "ALL", label: "ALL" }, ...ASSET_TYPES].map((f) => (
           <button
             key={f.value}
+            type="button"
             onClick={() => setFilter(f.value)}
-            className={cn(
-              "h-7 border border-border px-2 font-mono text-[10px] tracking-wide",
+            className={`border px-2 py-0.5 font-mono text-[10px] tracking-widest ${
               filter === f.value
-                ? "border-accent bg-accent text-accent-fg"
-                : "bg-surface text-muted hover:text-fg",
-            )}
+                ? "border-accent text-accent"
+                : "border-border text-muted hover:text-fg"
+            }`}
           >
-            {f.label.toUpperCase()}
+            {f.label}
           </button>
         ))}
       </div>
 
-      <div className="overflow-hidden border border-border bg-surface">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[640px] text-left font-mono text-xs">
-            <thead className="border-b border-border text-[10px] tracking-widest text-muted">
-              <tr>
-                <th className="px-2 py-1.5">NAME</th>
-                <th className="px-2 py-1.5">TYPE</th>
-                <th className="px-2 py-1.5 text-right">QTY</th>
-                <th className="px-2 py-1.5 text-right">VALUE</th>
-                <th className="px-2 py-1.5 text-right">COST</th>
-                <th className="px-2 py-1.5 text-right">P&L%</th>
-                <th className="px-2 py-1.5 text-right"> </th>
-              </tr>
-            </thead>
-            <tbody>
-              {pager.slice.map((a) => {
-                const val = toUsd(a.currentValue, a.currency, data.fx.average);
-                const cost = toUsd(a.costBasis, a.currency, data.fx.average);
-                const pnl = cost ? ((val - cost) / cost) * 100 : 0;
-                return (
-                  <tr key={a.id} className="border-b border-border/50 hover:bg-black/30">
-                    <td className="px-2 py-1.5">
-                      <span className="text-fg">{a.name}</span>
-                      {a.ticker ? (
-                        <span className="ml-1 text-subtle">{a.ticker}</span>
-                      ) : null}
-                    </td>
-                    <td className="px-2 py-1.5 text-muted">{a.type}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-subtle">
-                      {a.quantity}
-                    </td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">
-                      {formatUsd(a.currentValue)}
-                    </td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-muted">
-                      {formatUsd(a.costBasis)}
-                    </td>
-                    <td
-                      className={`px-2 py-1.5 text-right tabular-nums ${
-                        pnl >= 0 ? "text-gain" : "text-loss"
-                      }`}
+      <div className="border border-border bg-surface">
+        <table className="w-full font-mono text-[11px]">
+          <thead>
+            <tr className="border-b border-border text-left text-[10px] tracking-widest text-accent">
+              <th className="px-2 py-1">NAME</th>
+              <th className="px-2 py-1">TYPE</th>
+              <th className="px-2 py-1 text-right">VALUE</th>
+              <th className="px-2 py-1 text-right"> </th>
+            </tr>
+          </thead>
+          <tbody>
+            {pager.slice.map((a) => {
+              const typeLabel = ASSET_TYPES.find((t) => t.value === a.type)?.label ?? a.type;
+              return (
+                <tr key={a.id} className="border-b border-border/50 hover:bg-raised/40">
+                  <td className="px-2 py-1.5">
+                    <Link to="/assets/$id" params={{ id: a.id }} className="text-fg hover:text-accent">
+                      {a.name}
+                      {a.ticker ? <span className="ml-1 text-subtle">{a.ticker}</span> : null}
+                    </Link>
+                  </td>
+                  <td className="px-2 py-1.5 text-muted">{typeLabel}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{formatUsd(a.currentValue)}</td>
+                  <td className="px-2 py-1.5 text-right">
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="Eliminar"
+                      onClick={() => setDelId(a.id)}
                     >
-                      {formatPct(pnl)}
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label="Editar"
-                          onClick={() => setEditing(a)}
-                        >
-                          <Pencil className="size-4" />
-                        </Button>
-                        <Button asChild variant="ghost" size="icon-sm">
-                          <Link to="/assets/$id" params={{ id: a.id }} aria-label="Ver">
-                            <Eye className="size-4" />
-                          </Link>
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label="Eliminar"
-                          onClick={() => setDeleting(a)}
-                        >
-                          <Trash2 className="size-4 text-loss" />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      <Trash2 className="size-4 text-loss" />
+                    </Button>
+                  </td>
+                </tr>
+              );
+            })}
+            {list.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="px-2 py-10 text-center text-muted">
+                  Sin activos
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+        <div className="px-2 pb-1">
+          <Pager
+            page={pager.page}
+            totalPages={pager.totalPages}
+            total={pager.total}
+            from={pager.from}
+            to={pager.to}
+            onChange={pager.setPage}
+          />
         </div>
-        {list.length === 0 ? (
-          <p className="py-16 text-center text-sm text-muted">
-            No hay activos. Agregá el primero — queda guardado en la base.
-          </p>
-        ) : (
-          <div className="px-2 pb-2">
-            <Pager
-              page={pager.page}
-              totalPages={pager.totalPages}
-              total={pager.total}
-              from={pager.from}
-              to={pager.to}
-              onChange={pager.setPage}
-            />
-          </div>
-        )}
       </div>
 
-      {editing !== null ? (
+      {open ? (
         <AssetForm
-          key={editing === "new" ? "new" : editing.id}
           open
-          initial={editing === "new" ? null : editing}
           pending={pending}
-          onClose={() => setEditing(null)}
+          onClose={() => setOpen(false)}
           onSubmit={async (payload) => {
             setPending(true);
             try {
               await upsertAsset({ data: payload });
               toast.success("Activo guardado");
-              setEditing(null);
-              await refresh();
+              setOpen(false);
+              await router.invalidate();
             } catch (e) {
-              toast.error(e instanceof Error ? e.message : "No se pudo guardar");
+              toast.error(e instanceof Error ? e.message : "Error");
             } finally {
               setPending(false);
             }
@@ -180,25 +135,19 @@ export default function AssetsPage() {
       ) : null}
 
       <ConfirmDelete
-        open={!!deleting}
+        open={!!delId}
         title="Eliminar activo"
-        body={
-          deleting
-            ? `Se va a borrar “${deleting.name}” de la base de datos. No vuelve al cambiar de pantalla.`
-            : ""
-        }
+        body="Se borra el activo y sus ingresos recurrentes."
         pending={pending}
-        onClose={() => setDeleting(null)}
+        onClose={() => setDelId(null)}
         onConfirm={async () => {
-          if (!deleting) return;
+          if (!delId) return;
           setPending(true);
           try {
-            await deleteAsset({ data: { id: deleting.id } });
+            await deleteAsset({ data: { id: delId } });
             toast.success("Eliminado");
-            setDeleting(null);
-            await refresh();
-          } catch (e) {
-            toast.error(e instanceof Error ? e.message : "No se pudo eliminar");
+            setDelId(null);
+            await router.invalidate();
           } finally {
             setPending(false);
           }
