@@ -19,19 +19,25 @@ import {
 
 /** Coupons grouped by ticker over projected events. */
 export function couponsByTicker(events: ProjectedEvent[], limit = 24) {
-  const map = new Map<string, { name: string; total: number; count: number; next: string }>();
+  const map = new Map<
+    string,
+    { name: string; total: number; count: number; next: string }
+  >();
   for (const e of events) {
     if (e.kind !== "COUPON") continue;
     const key = e.assetId || e.name;
-    const cur = map.get(key) || { name: e.name, total: 0, count: 0, next: e.date };
+    const cur = map.get(key) || {
+      name: e.name,
+      total: 0,
+      count: 0,
+      next: e.date,
+    };
     cur.total += e.amountUsd;
     cur.count += 1;
     if (e.date < cur.next) cur.next = e.date;
     map.set(key, cur);
   }
-  return [...map.values()]
-    .sort((a, b) => b.total - a.total)
-    .slice(0, limit);
+  return [...map.values()].sort((a, b) => b.total - a.total).slice(0, limit);
 }
 
 export function upcomingAmort(events: ProjectedEvent[], limit = 20) {
@@ -40,11 +46,19 @@ export function upcomingAmort(events: ProjectedEvent[], limit = 20) {
 
 export function paymentCalendar(events: ProjectedEvent[], months = 24) {
   const today = new Date();
-  const cells: { key: string; label: string; total: number; count: number }[] = [];
+  const cells: { key: string; label: string; total: number; count: number }[] =
+    [];
   for (let i = 0; i < months; i++) {
-    const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + i, 1));
+    const d = new Date(
+      Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + i, 1),
+    );
     const key = d.toISOString().slice(0, 7);
-    cells.push({ key, label: key.slice(5) + "/" + key.slice(2, 4), total: 0, count: 0 });
+    cells.push({
+      key,
+      label: key.slice(5) + "/" + key.slice(2, 4),
+      total: 0,
+      count: 0,
+    });
   }
   for (const e of events) {
     const key = e.date.slice(0, 7);
@@ -57,13 +71,20 @@ export function paymentCalendar(events: ProjectedEvent[], months = 24) {
   return cells;
 }
 
-export function bondYields(assets: Asset[], events: ProjectedEvent[], fxAvg: number) {
+export function bondYields(
+  assets: Asset[],
+  events: ProjectedEvent[],
+  fxAvg: number,
+) {
   const bonds = assets.filter((a) => a.type === "BOND");
   return bonds
     .map((b) => {
       const value = toUsd(b.currentValue, b.currency, fxAvg);
       const yearly = events
-        .filter((e) => e.assetId === b.id && (e.kind === "COUPON" || e.kind === "OTHER"))
+        .filter(
+          (e) =>
+            e.assetId === b.id && (e.kind === "COUPON" || e.kind === "OTHER"),
+        )
         .reduce((s, e) => s + e.amountUsd, 0);
       // events are 12m window → yearly ≈ sum
       const ytm = value > 0 ? (yearly / value) * 100 : 0;
@@ -78,11 +99,23 @@ export function bondYields(assets: Asset[], events: ProjectedEvent[], fxAvg: num
     .sort((a, b) => b.yieldPct - a.yieldPct);
 }
 
-export function incomeExpenseSeries(transactions: Tx[], fxAvg: number, months = 12) {
+export function incomeExpenseSeries(
+  transactions: Tx[],
+  fxAvg: number,
+  months = 12,
+) {
   const today = new Date();
-  const buckets: { key: string; label: string; income: number; expense: number; net: number }[] = [];
+  const buckets: {
+    key: string;
+    label: string;
+    income: number;
+    expense: number;
+    net: number;
+  }[] = [];
   for (let i = months - 1; i >= 0; i--) {
-    const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - i, 1));
+    const d = new Date(
+      Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - i, 1),
+    );
     const key = d.toISOString().slice(0, 7);
     buckets.push({
       key,
@@ -156,7 +189,11 @@ export function pnlContribution(assets: Asset[], fxAvg: number) {
     .sort((a, b) => b.pnl - a.pnl);
 }
 
-export function currencyBreakdown(assets: Asset[], accounts: Account[], fxAvg: number) {
+export function currencyBreakdown(
+  assets: Asset[],
+  accounts: Account[],
+  fxAvg: number,
+) {
   const map = new Map<string, number>();
   const add = (c: string, n: number) => {
     const code = (c || "USD").toUpperCase();
@@ -166,14 +203,23 @@ export function currencyBreakdown(assets: Asset[], accounts: Account[], fxAvg: n
   for (const a of accounts) add(a.currency, a.balance);
   const total = [...map.values()].reduce((s, v) => s + v, 0) || 1;
   return [...map.entries()]
-    .map(([code, valueUsd]) => ({ code, valueUsd, weight: (valueUsd / total) * 100 }))
+    .map(([code, valueUsd]) => ({
+      code,
+      valueUsd,
+      weight: (valueUsd / total) * 100,
+    }))
     .sort((a, b) => b.valueUsd - a.valueUsd);
 }
 
 export function nwDrawdown(snapshots: Snapshot[], currentNw: number) {
   const pts = [...snapshots].sort((a, b) => a.date.localeCompare(b.date));
   if (pts.length === 0) {
-    return { peak: currentNw, trough: currentNw, drawdownPct: 0, series: [] as { date: string; value: number; dd: number }[] };
+    return {
+      peak: currentNw,
+      trough: currentNw,
+      drawdownPct: 0,
+      series: [] as { date: string; value: number; dd: number }[],
+    };
   }
   let peak = pts[0].totalUsd;
   const series: { date: string; value: number; dd: number }[] = [];
@@ -196,8 +242,12 @@ export function nwDrawdown(snapshots: Snapshot[], currentNw: number) {
 }
 
 /** Herfindahl-Hirschman Index of holdings (0–10000). */
-export function concentrationStats(assets: Asset[], accounts: Account[], fxAvg: number) {
-  const nw = netWorthUsd({ assets, accounts, fx: { official: fxAvg, blue: fxAvg, mep: fxAvg, average: fxAvg } });
+export function concentrationStats(
+  assets: Asset[],
+  accounts: Account[],
+  fxAvg: number,
+) {
+  const nw = netWorthUsd({ assets, accounts, fx: { average: fxAvg } });
   const holdings = rankedHoldings(assets, accounts, fxAvg, nw);
   const hhi = holdings.reduce((s, h) => s + h.weight * h.weight, 0);
   return {
@@ -313,7 +363,12 @@ export function computeAnalytics(p: Portfolio) {
     concentration: concentrationStats(p.assets, p.accounts, fxAvg),
     classes: classCorrelationProxy(p.assets),
     fxScenario: fxScenario(p.assets, p.accounts, p.fx),
-    rebalance: rebalanceSuggestions(p.assets, p.accounts, p.allocTargets, fxAvg),
+    rebalance: rebalanceSuggestions(
+      p.assets,
+      p.accounts,
+      p.allocTargets,
+      fxAvg,
+    ),
     costLadder: costBasisLadder(p.assets, fxAvg),
     goals: goalsProgress(p.goals, nw),
     events12,

@@ -62,7 +62,11 @@ export function AccountForm({
         }}
       >
         <Field label="Nombre">
-          <Input required value={name} onChange={(e) => setName(e.target.value)} />
+          <Input
+            required
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Tipo">
@@ -75,7 +79,10 @@ export function AccountForm({
             </Select>
           </Field>
           <Field label="Moneda">
-            <Select value={currency} onChange={(e) => setCurrency(e.target.value)}>
+            <Select
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value)}
+            >
               {CURRENCIES.map((c) => (
                 <option key={c} value={c}>
                   {c}
@@ -85,7 +92,10 @@ export function AccountForm({
           </Field>
         </div>
         <Field label="Institución">
-          <Input value={institution} onChange={(e) => setInstitution(e.target.value)} />
+          <Input
+            value={institution}
+            onChange={(e) => setInstitution(e.target.value)}
+          />
         </Field>
         <Field label="Saldo">
           <Input
@@ -97,7 +107,11 @@ export function AccountForm({
           />
         </Field>
         <Field label="Notas">
-          <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
+          <Textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={2}
+          />
         </Field>
         <div className="flex justify-end gap-2 pt-2">
           <Button type="button" variant="ghost" onClick={onClose}>

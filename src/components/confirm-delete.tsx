@@ -17,7 +17,12 @@ export function ConfirmDelete({
   pending?: boolean;
 }) {
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()} title={title} description={body}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => !v && onClose()}
+      title={title}
+      description={body}
+    >
       <div className="flex justify-end gap-2">
         <Button variant="ghost" onClick={onClose}>
           Cancelar

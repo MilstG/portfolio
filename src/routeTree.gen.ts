@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AssetsRouteImport } from './routes/assets'
 import { Route as CashRouteImport } from './routes/cash'
 import { Route as CashflowRouteImport } from './routes/cashflow'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as AssetsIdRouteImport } from './routes/assets_.$id'
 
@@ -36,6 +37,11 @@ const CashflowRoute = CashflowRouteImport.update({
   path: '/cashflow',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -52,6 +58,7 @@ export interface FileRoutesByFullPath {
   '/assets': typeof AssetsRoute
   '/cash': typeof CashRoute
   '/cashflow': typeof CashflowRoute
+  '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
   '/assets/$id': typeof AssetsIdRoute
 }
@@ -60,6 +67,7 @@ export interface FileRoutesByTo {
   '/assets': typeof AssetsRoute
   '/cash': typeof CashRoute
   '/cashflow': typeof CashflowRoute
+  '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
   '/assets/$id': typeof AssetsIdRoute
 }
@@ -69,21 +77,36 @@ export interface FileRoutesById {
   '/assets': typeof AssetsRoute
   '/cash': typeof CashRoute
   '/cashflow': typeof CashflowRoute
+  '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
   '/assets_/$id': typeof AssetsIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/assets' | '/cash' | '/cashflow' | '/settings' | '/assets/$id'
+    | '/'
+    | '/assets'
+    | '/cash'
+    | '/cashflow'
+    | '/login'
+    | '/settings'
+    | '/assets/$id'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/assets' | '/cash' | '/cashflow' | '/settings' | '/assets/$id'
+  to:
+    | '/'
+    | '/assets'
+    | '/cash'
+    | '/cashflow'
+    | '/login'
+    | '/settings'
+    | '/assets/$id'
   id:
     | '__root__'
     | '/'
     | '/assets'
     | '/cash'
     | '/cashflow'
+    | '/login'
     | '/settings'
     | '/assets_/$id'
   fileRoutesById: FileRoutesById
@@ -93,6 +116,7 @@ export interface RootRouteChildren {
   AssetsRoute: typeof AssetsRoute
   CashRoute: typeof CashRoute
   CashflowRoute: typeof CashflowRoute
+  LoginRoute: typeof LoginRoute
   SettingsRoute: typeof SettingsRoute
   AssetsIdRoute: typeof AssetsIdRoute
 }
@@ -127,6 +151,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CashflowRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings': {
       id: '/settings'
       path: '/settings'
@@ -149,6 +180,7 @@ const rootRouteChildren: RootRouteChildren = {
   AssetsRoute: AssetsRoute,
   CashRoute: CashRoute,
   CashflowRoute: CashflowRoute,
+  LoginRoute: LoginRoute,
   SettingsRoute: SettingsRoute,
   AssetsIdRoute: AssetsIdRoute,
 }

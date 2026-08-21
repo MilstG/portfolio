@@ -35,8 +35,12 @@ export function AssetForm({
   const [ticker, setTicker] = useState(initial?.ticker ?? "");
   const [type, setType] = useState(initial?.type ?? "CRYPTO");
   const [quantity, setQuantity] = useState(initial?.quantity?.toString() ?? "");
-  const [costBasis, setCostBasis] = useState(initial?.costBasis?.toString() ?? "");
-  const [currentValue, setCurrentValue] = useState(initial?.currentValue?.toString() ?? "");
+  const [costBasis, setCostBasis] = useState(
+    initial?.costBasis?.toString() ?? "",
+  );
+  const [currentValue, setCurrentValue] = useState(
+    initial?.currentValue?.toString() ?? "",
+  );
   const [currency, setCurrency] = useState(initial?.currency ?? "USD");
   const [purchaseDate, setPurchaseDate] = useState(initial?.purchaseDate ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
@@ -73,7 +77,11 @@ export function AssetForm({
         }}
       >
         <Field label="Nombre">
-          <Input required value={name} onChange={(e) => setName(e.target.value)} />
+          <Input
+            required
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Tipo">
@@ -86,7 +94,10 @@ export function AssetForm({
             </Select>
           </Field>
           <Field label="Moneda">
-            <Select value={currency} onChange={(e) => setCurrency(e.target.value)}>
+            <Select
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value)}
+            >
               {CURRENCIES.map((c) => (
                 <option key={c} value={c}>
                   {c}
@@ -97,7 +108,11 @@ export function AssetForm({
         </div>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Ticker">
-            <Input value={ticker} onChange={(e) => setTicker(e.target.value)} placeholder="BTC" />
+            <Input
+              value={ticker}
+              onChange={(e) => setTicker(e.target.value)}
+              placeholder="BTC"
+            />
           </Field>
           <Field label="Cantidad">
             <Input
@@ -129,10 +144,18 @@ export function AssetForm({
           </Field>
         </div>
         <Field label="Fecha de compra">
-          <Input type="date" value={purchaseDate} onChange={(e) => setPurchaseDate(e.target.value)} />
+          <Input
+            type="date"
+            value={purchaseDate}
+            onChange={(e) => setPurchaseDate(e.target.value)}
+          />
         </Field>
         <Field label="Notas">
-          <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
+          <Textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={2}
+          />
         </Field>
         <div className="flex justify-end gap-2 pt-2">
           <Button type="button" variant="ghost" onClick={onClose}>

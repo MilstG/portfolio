@@ -1,7 +1,9 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { getSql } from "@/lib/db";
+import { requireAuth } from "@/lib/server/auth";
 import { netWorthUsd } from "@/lib/portfolio-math";
+import { ASSET_TYPES, CURRENCIES, FREQUENCIES, TX_TYPES } from "@/lib/utils";
 import { fetchCryptoUsd, fetchStockUsd } from "@/lib/prices";
 import type {
   Account,
@@ -41,7 +43,8 @@ function mapAsset(r: Record<string, unknown>): Asset {
     costBasis: num(r.cost_basis),
     currentValue: num(r.current_value),
     currency: String(r.currency),
-    purchaseDate: r.purchase_date == null ? null : String(r.purchase_date).slice(0, 10),
+    purchaseDate:
+      r.purchase_date == null ? null : String(r.purchase_date).slice(0, 10),
     notes: r.notes == null ? null : String(r.notes),
   };
 }
@@ -130,7 +133,8 @@ function mapGoal(r: Record<string, unknown>): Goal {
     id: String(r.id),
     name: String(r.name),
     targetUsd: num(r.target_usd),
-    targetDate: r.target_date == null ? null : String(r.target_date).slice(0, 10),
+    targetDate:
+      r.target_date == null ? null : String(r.target_date).slice(0, 10),
     notes: r.notes == null ? null : String(r.notes),
   };
 }
@@ -143,14 +147,6 @@ async function loadFx(): Promise<Fx> {
   const blue = num(r.blue);
   const mep = num(r.mep);
   return { official, blue, mep, average: (official + blue + mep) / 3 };
-}
-
-async function safeQuery(run: () => Promise<Record<string, unknown>[]>) {
-  try {
-    return await run();
-  } catch {
-    return [] as Record<string, unknown>[];
-  }
 }
 
 function stepFrequency(iso: string, frequency: string): string {
@@ -193,7 +189,9 @@ async function applyDueRecurringInner() {
     while (cursor <= today && guard < 36) {
       const txId = crypto.randomUUID();
       const signed =
-        rec.direction === "EXPENSE" ? -Math.abs(rec.amount) : Math.abs(rec.amount);
+        rec.direction === "EXPENSE"
+          ? -Math.abs(rec.amount)
+          : Math.abs(rec.amount);
       const txType = rec.direction === "EXPENSE" ? "EXPENSE" : "INCOME";
       await sql.query(
         `insert into transactions (id, date, description, amount, currency, type, category, asset_id, account_id)
@@ -220,50 +218,47 @@ async function applyDueRecurringInner() {
       guard += 1;
       applied += 1;
     }
-    await sql.query(`update recurring_incomes set next_date = $1 where id = $2`, [
-      cursor,
-      rec.id,
-    ]);
+    await sql.query(
+      `update recurring_incomes set next_date = $1 where id = $2`,
+      [cursor, rec.id],
+    );
   }
   return applied;
 }
 
 async function loadPortfolioInner(): Promise<Portfolio> {
   const sql = await getSql();
-  try {
-    await applyDueRecurringInner();
-  } catch {
-    // schema may not have account_id yet; still load
-  }
+  await applyDueRecurringInner();
 
-  const [assetRows, accRows, recRows, txRows, snapRows, fx] = await Promise.all([
+  const [
+    assetRows,
+    accRows,
+    recRows,
+    txRows,
+    snapRows,
+    fx,
+    liabilityRows,
+    goalRows,
+    allocRows,
+    fxHistRows,
+    settingsRows,
+    taxLotRows,
+    watchRows,
+  ] = await Promise.all([
     sql`select * from assets order by current_value desc`,
     sql`select * from accounts order by name`,
     sql`select * from recurring_incomes order by next_date`,
     sql`select * from transactions order by date desc, created_at desc limit 500`,
     sql`select date, total_usd from snapshots order by date asc`,
     loadFx(),
+    sql`select * from liabilities order by balance desc`,
+    sql`select * from goals order by name`,
+    sql`select asset_type, target_pct from alloc_targets`,
+    sql`select date, official, blue, mep from fx_history order by date desc limit 90`,
+    sql`select pin_hash is not null as has_pin, pin_enabled from app_settings where id = 1`,
+    sql`select * from tax_lots order by purchased_at desc`,
+    sql`select * from watchlist order by ticker`,
   ]);
-
-  const liabilityRows = await safeQuery(
-    () => sql`select * from liabilities order by balance desc`,
-  );
-  const goalRows = await safeQuery(() => sql`select * from goals order by name`);
-  const allocRows = await safeQuery(
-    () => sql`select asset_type, target_pct from alloc_targets`,
-  );
-  const fxHistRows = await safeQuery(
-    () => sql`select date, official, blue, mep from fx_history order by date desc limit 90`,
-  );
-  const settingsRows = await safeQuery(
-    () => sql`select pin_hash is not null as has_pin, pin_enabled from app_settings where id = 1`,
-  );
-  const taxLotRows = await safeQuery(
-    () => sql`select * from tax_lots order by purchased_at desc`,
-  );
-  const watchRows = await safeQuery(
-    () => sql`select * from watchlist order by ticker`,
-  );
 
   const settings: AppSettings = {
     pinEnabled: Boolean(settingsRows[0]?.pin_enabled),
@@ -282,37 +277,56 @@ async function loadPortfolioInner(): Promise<Portfolio> {
     fx,
     liabilities: liabilityRows.map(mapLiability),
     goals: goalRows.map(mapGoal),
-    allocTargets: allocRows.map(
-      (r): AllocTarget => ({
-        assetType: String(r.asset_type),
-        targetPct: num(r.target_pct),
-      }),
-    ),
-    fxHistory: fxHistRows.map(
-      (r): FxHistoryRow => {
-        const official = num(r.official);
-        const blue = num(r.blue);
-        const mep = num(r.mep);
-        return {
-          date: String(r.date).slice(0, 10),
-          official,
-          blue,
-          mep,
-          average: (official + blue + mep) / 3,
-        };
-      },
-    ),
+    allocTargets: allocRows.map((r): AllocTarget => ({
+      assetType: String(r.asset_type),
+      targetPct: num(r.target_pct),
+    })),
+    fxHistory: fxHistRows.map((r): FxHistoryRow => {
+      const official = num(r.official);
+      const blue = num(r.blue);
+      const mep = num(r.mep);
+      return {
+        date: String(r.date).slice(0, 10),
+        official,
+        blue,
+        mep,
+        average: (official + blue + mep) / 3,
+      };
+    }),
     settings,
     taxLots: taxLotRows.map(mapTaxLot),
     watchlist: watchRows.map(mapWatch),
   };
 }
 
-/** netWorthUsd already subtracts liabilities — do not subtract twice. */
+/**
+ * Recompute today's net worth from the four tables that feed it (not the whole
+ * portfolio) and upsert the daily snapshot. netWorthUsd already subtracts
+ * liabilities — do not subtract twice.
+ */
 async function writeTodaySnapshot() {
   const sql = await getSql();
-  const portfolio = await loadPortfolioInner();
-  const total = netWorthUsd(portfolio);
+  const [assetRows, accRows, liabilityRows, fx] = await Promise.all([
+    sql`select current_value, currency from assets`,
+    sql`select balance, currency from accounts`,
+    sql`select balance, currency from liabilities`,
+    loadFx(),
+  ]);
+  const total = netWorthUsd({
+    assets: assetRows.map((r) => ({
+      currentValue: num(r.current_value),
+      currency: String(r.currency),
+    })),
+    accounts: accRows.map((r) => ({
+      balance: num(r.balance),
+      currency: String(r.currency),
+    })),
+    liabilities: liabilityRows.map((r) => ({
+      balance: num(r.balance),
+      currency: String(r.currency),
+    })),
+    fx,
+  });
   const today = new Date().toISOString().slice(0, 10);
   await sql.query(
     `insert into snapshots (date, total_usd) values ($1, $2)
@@ -321,27 +335,40 @@ async function writeTodaySnapshot() {
   );
 }
 
-async function sha256(text: string) {
-  const data = new TextEncoder().encode(text);
-  const buf = await crypto.subtle.digest("SHA-256", data);
-  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
+const isoDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida (YYYY-MM-DD)");
+// `.pipe` keeps the client-side input type as plain string while the server
+// still rejects anything outside the known set.
+const currency = z.string().trim().toUpperCase().pipe(z.enum(CURRENCIES));
+const assetType = z.enum(
+  ASSET_TYPES.map((t) => t.value) as [string, ...string[]],
+);
+const frequency = z.enum(
+  FREQUENCIES.map((f) => f.value) as [string, ...string[]],
+);
+const txType = z.enum(TX_TYPES.map((t) => t.value) as [string, ...string[]]);
+const shortText = z.string().trim().max(200);
+const longText = z.string().max(2000);
+const money = z.number().finite();
 
-export const getPortfolio = createServerFn({ method: "GET" }).handler(async () => {
-  return loadPortfolioInner();
-});
+export const getPortfolio = createServerFn({ method: "GET" })
+  .middleware([requireAuth])
+  .handler(async () => {
+    return loadPortfolioInner();
+  });
 
 export const getAsset = createServerFn({ method: "GET" })
+  .middleware([requireAuth])
   .validator(z.object({ id: z.string() }))
   .handler(async ({ data }) => {
     const sql = await getSql();
     const rows = await sql`select * from assets where id = ${data.id}`;
     if (!rows[0]) return null;
-    const rec =
-      await sql`select * from recurring_incomes where asset_id = ${data.id} order by next_date`;
-    const lots = await safeQuery(
-      () => sql`select * from tax_lots where asset_id = ${data.id} order by purchased_at`,
-    );
+    const [rec, lots] = await Promise.all([
+      sql`select * from recurring_incomes where asset_id = ${data.id} order by next_date`,
+      sql`select * from tax_lots where asset_id = ${data.id} order by purchased_at`,
+    ]);
     return {
       asset: mapAsset(rows[0]),
       recurring: rec.map(mapRec),
@@ -350,19 +377,20 @@ export const getAsset = createServerFn({ method: "GET" })
   });
 
 const assetInput = z.object({
-  id: z.string().optional(),
-  name: z.string().min(1),
-  ticker: z.string().optional().nullable(),
-  type: z.string(),
-  quantity: z.number().nullable().optional(),
-  costBasis: z.number(),
-  currentValue: z.number(),
-  currency: z.string(),
-  purchaseDate: z.string().optional().nullable(),
-  notes: z.string().optional().nullable(),
+  id: z.string().max(64).optional(),
+  name: shortText.min(1),
+  ticker: z.string().trim().max(24).optional().nullable(),
+  type: assetType,
+  quantity: money.nullable().optional(),
+  costBasis: money,
+  currentValue: money,
+  currency,
+  purchaseDate: isoDate.optional().nullable().or(z.literal("")),
+  notes: longText.optional().nullable(),
 });
 
 export const upsertAsset = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
   .validator(assetInput)
   .handler(async ({ data }) => {
     const sql = await getSql();
@@ -399,6 +427,7 @@ export const upsertAsset = createServerFn({ method: "POST" })
   });
 
 export const deleteAsset = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
   .validator(z.object({ id: z.string() }))
   .handler(async ({ data }) => {
     const sql = await getSql();
@@ -408,16 +437,19 @@ export const deleteAsset = createServerFn({ method: "POST" })
   });
 
 const accountInput = z.object({
-  id: z.string().optional(),
-  name: z.string().min(1),
-  institution: z.string().optional().nullable(),
-  type: z.string(),
-  currency: z.string(),
-  balance: z.number(),
-  notes: z.string().optional().nullable(),
+  id: z.string().max(64).optional(),
+  name: shortText.min(1),
+  institution: shortText.optional().nullable(),
+  type: z
+    .string()
+    .pipe(z.enum(["bank", "broker", "exchange", "wallet", "physical"])),
+  currency,
+  balance: money,
+  notes: longText.optional().nullable(),
 });
 
 export const upsertAccount = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
   .validator(accountInput)
   .handler(async ({ data }) => {
     const sql = await getSql();
@@ -448,6 +480,7 @@ export const upsertAccount = createServerFn({ method: "POST" })
   });
 
 export const deleteAccount = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
   .validator(z.object({ id: z.string() }))
   .handler(async ({ data }) => {
     const sql = await getSql();
@@ -457,19 +490,20 @@ export const deleteAccount = createServerFn({ method: "POST" })
   });
 
 const recInput = z.object({
-  id: z.string().optional(),
-  assetId: z.string().min(1),
-  accountId: z.string().optional().nullable(),
-  name: z.string().min(1),
-  amount: z.number(),
-  currency: z.string(),
-  frequency: z.string(),
-  nextDate: z.string(),
-  notes: z.string().optional().nullable(),
+  id: z.string().max(64).optional(),
+  assetId: z.string().min(1).max(64),
+  accountId: z.string().max(64).optional().nullable(),
+  name: shortText.min(1),
+  amount: money,
+  currency,
+  frequency,
+  nextDate: isoDate,
+  notes: longText.optional().nullable(),
   direction: z.enum(["INCOME", "EXPENSE"]).optional(),
 });
 
 export const upsertRecurring = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
   .validator(recInput)
   .handler(async ({ data }) => {
     const sql = await getSql();
@@ -505,6 +539,7 @@ export const upsertRecurring = createServerFn({ method: "POST" })
   });
 
 export const deleteRecurring = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
   .validator(z.object({ id: z.string() }))
   .handler(async ({ data }) => {
     const sql = await getSql();
@@ -513,17 +548,18 @@ export const deleteRecurring = createServerFn({ method: "POST" })
   });
 
 const txInput = z.object({
-  description: z.string().min(1),
-  amount: z.number(),
-  currency: z.string(),
-  type: z.string(),
-  category: z.string().optional().nullable(),
-  date: z.string(),
-  assetId: z.string().optional().nullable(),
-  accountId: z.string().optional().nullable(),
+  description: shortText.min(1),
+  amount: money,
+  currency,
+  type: txType,
+  category: shortText.optional().nullable(),
+  date: isoDate,
+  assetId: z.string().max(64).optional().nullable(),
+  accountId: z.string().max(64).optional().nullable(),
 });
 
 export const addTransaction = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
   .validator(txInput)
   .handler(async ({ data }) => {
     const sql = await getSql();
@@ -547,6 +583,7 @@ export const addTransaction = createServerFn({ method: "POST" })
   });
 
 export const deleteTransaction = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
   .validator(z.object({ id: z.string() }))
   .handler(async ({ data }) => {
     const sql = await getSql();
@@ -555,11 +592,12 @@ export const deleteTransaction = createServerFn({ method: "POST" })
   });
 
 export const updateFx = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
   .validator(
     z.object({
-      official: z.number(),
-      blue: z.number(),
-      mep: z.number(),
+      official: z.number().positive(),
+      blue: z.number().positive(),
+      mep: z.number().positive(),
     }),
   )
   .handler(async ({ data }) => {
@@ -586,94 +624,71 @@ export const updateFx = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-export const refreshPrices = createServerFn({ method: "POST" }).handler(async () => {
-  const sql = await getSql();
-  const assets = await sql`select id, ticker, type, quantity, current_value from assets`;
-  const cryptoTickers = assets
-    .filter((a) => String(a.type) === "CRYPTO" && a.ticker)
-    .map((a) => String(a.ticker).toUpperCase());
-  const stockTickers = assets
-    .filter((a) => String(a.type) === "STOCK" && a.ticker)
-    .map((a) => String(a.ticker).toUpperCase());
-
-  const [crypto, stocks] = await Promise.all([
-    fetchCryptoUsd(cryptoTickers),
-    fetchStockUsd(stockTickers),
-  ]);
-
-  let updated = 0;
-  for (const a of assets) {
-    const ticker = a.ticker ? String(a.ticker).toUpperCase() : null;
-    if (!ticker) continue;
-    const qty = a.quantity == null ? null : num(a.quantity);
-    let unit: number | undefined;
-    if (String(a.type) === "CRYPTO") unit = crypto[ticker];
-    if (String(a.type) === "STOCK") unit = stocks[ticker];
-    if (unit == null || unit <= 0) continue;
-    const value = qty != null && qty > 0 ? unit * qty : unit;
-    await sql.query(
-      `update assets set current_value = $1, updated_at = now() where id = $2`,
-      [value, a.id],
-    );
-    updated += 1;
-  }
-  if (updated > 0) await writeTodaySnapshot();
-  return { updated, crypto: Object.keys(crypto).length, stocks: Object.keys(stocks).length };
-});
-
-export const snapshotNow = createServerFn({ method: "POST" }).handler(async () => {
-  await writeTodaySnapshot();
-  return { ok: true };
-});
-
-export const setPin = createServerFn({ method: "POST" })
-  .validator(
-    z.object({
-      pin: z.string().min(4).max(32).nullable(),
-    }),
-  )
-  .handler(async ({ data }) => {
+export const refreshPrices = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
+  .handler(async () => {
     const sql = await getSql();
-    await sql.query(
-      `insert into app_settings (id, pin_enabled) values (1, false)
-       on conflict (id) do nothing`,
-    );
-    if (!data.pin) {
-      await sql.query(
-        `update app_settings set pin_hash = null, pin_enabled = false, updated_at = now() where id = 1`,
-      );
-      return { ok: true, enabled: false };
+    const assets =
+      await sql`select id, ticker, type, quantity, current_value from assets`;
+    const cryptoTickers = assets
+      .filter((a) => String(a.type) === "CRYPTO" && a.ticker)
+      .map((a) => String(a.ticker).toUpperCase());
+    const stockTickers = assets
+      .filter((a) => String(a.type) === "STOCK" && a.ticker)
+      .map((a) => String(a.ticker).toUpperCase());
+
+    const [crypto, stocks] = await Promise.all([
+      fetchCryptoUsd(cryptoTickers),
+      fetchStockUsd(stockTickers),
+    ]);
+
+    const ids: string[] = [];
+    const values: number[] = [];
+    for (const a of assets) {
+      const ticker = a.ticker ? String(a.ticker).toUpperCase() : null;
+      if (!ticker) continue;
+      const qty = a.quantity == null ? null : num(a.quantity);
+      let unit: number | undefined;
+      if (String(a.type) === "CRYPTO") unit = crypto[ticker];
+      if (String(a.type) === "STOCK") unit = stocks[ticker];
+      if (unit == null || unit <= 0) continue;
+      ids.push(String(a.id));
+      values.push(qty != null && qty > 0 ? unit * qty : unit);
     }
-    const hash = await sha256(data.pin);
-    await sql.query(
-      `update app_settings set pin_hash = $1, pin_enabled = true, updated_at = now() where id = 1`,
-      [hash],
-    );
-    return { ok: true, enabled: true };
+    const updated = ids.length;
+    if (updated > 0) {
+      await sql.query(
+        `update assets a set current_value = v.value, updated_at = now()
+         from unnest($1::text[], $2::numeric[]) as v(id, value)
+        where a.id = v.id`,
+        [ids, values],
+      );
+    }
+    if (updated > 0) await writeTodaySnapshot();
+    return {
+      updated,
+      crypto: Object.keys(crypto).length,
+      stocks: Object.keys(stocks).length,
+    };
   });
 
-export const verifyPin = createServerFn({ method: "POST" })
-  .validator(z.object({ pin: z.string() }))
-  .handler(async ({ data }) => {
-    const sql = await getSql();
-    const rows = await safeQuery(
-      () => sql`select pin_hash, pin_enabled from app_settings where id = 1`,
-    );
-    const row = rows[0];
-    if (!row?.pin_enabled || !row.pin_hash) return { ok: true };
-    const hash = await sha256(data.pin);
-    return { ok: hash === String(row.pin_hash) };
+export const snapshotNow = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
+  .handler(async () => {
+    await writeTodaySnapshot();
+    return { ok: true };
   });
 
 const goalInput = z.object({
-  id: z.string().optional(),
-  name: z.string().min(1),
-  targetUsd: z.number().positive(),
-  targetDate: z.string().optional().nullable(),
-  notes: z.string().optional().nullable(),
+  id: z.string().max(64).optional(),
+  name: shortText.min(1),
+  targetUsd: z.number().positive().finite(),
+  targetDate: isoDate.optional().nullable().or(z.literal("")),
+  notes: longText.optional().nullable(),
 });
 
 export const upsertGoal = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
   .validator(goalInput)
   .handler(async ({ data }) => {
     const sql = await getSql();
@@ -698,6 +713,7 @@ export const upsertGoal = createServerFn({ method: "POST" })
   });
 
 export const deleteGoal = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
   .validator(z.object({ id: z.string() }))
   .handler(async ({ data }) => {
     const sql = await getSql();
@@ -705,28 +721,31 @@ export const deleteGoal = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-const allocTargetInput = z.object({
-  assetType: z.string().min(1),
-  targetPct: z.number().min(0).max(100),
+const allocTargetsInput = z.object({
+  targets: z
+    .array(
+      z.object({
+        assetType: z.string().min(1).max(32),
+        targetPct: z.number().min(0).max(100),
+      }),
+    )
+    .max(20),
 });
 
-export const upsertAllocTarget = createServerFn({ method: "POST" })
-  .validator(allocTargetInput)
+/** Replace every allocation target in one round-trip. */
+export const setAllocTargets = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
+  .validator(allocTargetsInput)
   .handler(async ({ data }) => {
     const sql = await getSql();
     await sql.query(
       `insert into alloc_targets (asset_type, target_pct)
-       values ($1,$2)
+       select * from unnest($1::text[], $2::numeric[])
        on conflict (asset_type) do update set target_pct = excluded.target_pct`,
-      [data.assetType, data.targetPct],
+      [
+        data.targets.map((t) => t.assetType),
+        data.targets.map((t) => t.targetPct),
+      ],
     );
-    return { ok: true };
-  });
-
-export const deleteAllocTarget = createServerFn({ method: "POST" })
-  .validator(z.object({ assetType: z.string() }))
-  .handler(async ({ data }) => {
-    const sql = await getSql();
-    await sql`delete from alloc_targets where asset_type = ${data.assetType}`;
     return { ok: true };
   });

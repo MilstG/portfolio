@@ -35,11 +35,13 @@ export function Dialog({
                 {title}
               </DialogPrimitive.Title>
               {description ? (
-                <DialogPrimitive.Description className="mt-1 font-mono text-[11px] text-muted">
+                <DialogPrimitive.Description className="mt-1 font-mono text-[12px] text-muted">
                   {description}
                 </DialogPrimitive.Description>
               ) : (
-                <DialogPrimitive.Description className="sr-only">{title}</DialogPrimitive.Description>
+                <DialogPrimitive.Description className="sr-only">
+                  {title}
+                </DialogPrimitive.Description>
               )}
             </div>
             <DialogPrimitive.Close asChild>

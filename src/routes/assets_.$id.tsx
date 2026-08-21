@@ -4,7 +4,8 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { AssetForm } from "@/components/asset-form";
 import { ConfirmDelete } from "@/components/confirm-delete";
-import { Pager, usePager } from "@/components/pager";
+import { Monitor, PageHeader } from "@/components/ui/monitor";
+import { Pager, usePager } from "@/components/ui/pager";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Field, Input, Select } from "@/components/ui/input";
@@ -40,10 +41,10 @@ function AssetDetail() {
 
   if (!data) {
     return (
-      <div className="mx-auto max-w-3xl">
+      <div className="mx-auto max-w-3xl font-mono text-xs">
         <p className="text-muted">Activo no encontrado.</p>
-        <Link to="/assets" className="mt-4 inline-flex text-sm text-fg underline">
-          Volver
+        <Link to="/assets" className="mt-4 inline-flex text-accent underline">
+          Volver a POS
         </Link>
       </div>
     );
@@ -53,67 +54,91 @@ function AssetDetail() {
   const pnl = asset.costBasis
     ? ((asset.currentValue - asset.costBasis) / asset.costBasis) * 100
     : 0;
-  const typeLabel = ASSET_TYPES.find((t) => t.value === asset.type)?.label ?? asset.type;
+  const typeLabel =
+    ASSET_TYPES.find((t) => t.value === asset.type)?.label ?? asset.type;
 
   return (
-    <div className="mx-auto max-w-3xl">
-      <Link to="/assets" className="inline-flex items-center gap-2 text-sm text-muted hover:text-fg">
-        <ArrowLeft className="size-4" /> Activos
+    <div className="mx-auto flex max-w-3xl flex-col gap-2">
+      <Link
+        to="/assets"
+        className="inline-flex items-center gap-1.5 font-mono text-[11px] tracking-widest text-muted hover:text-accent"
+      >
+        <ArrowLeft className="size-3.5" /> POS
       </Link>
-      <div className="mt-6 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <p className="text-xs text-subtle">{typeLabel}</p>
-          <h1 className="mt-1 font-mono text-xl tracking-tight text-fg">{asset.name}</h1>
-          {asset.ticker ? <p className="mt-1 text-sm text-muted">{asset.ticker}</p> : null}
-        </div>
-        <div className="flex gap-2">
-          <Button variant="secondary" onClick={() => setEdit(true)}>
-            Editar
-          </Button>
-          <Button variant="danger" onClick={() => setDel(true)}>
-            Eliminar
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title={asset.name}
+        meta={
+          <p className="font-mono text-[11px] text-muted">
+            {typeLabel}
+            {asset.ticker ? ` · ${asset.ticker}` : ""} · {asset.currency}
+          </p>
+        }
+        actions={
+          <>
+            <Button variant="secondary" onClick={() => setEdit(true)}>
+              Editar
+            </Button>
+            <Button variant="danger" onClick={() => setDel(true)}>
+              Eliminar
+            </Button>
+          </>
+        }
+      />
 
-      <div className="mt-8 grid grid-cols-3 gap-3">
-        <div className="rounded-none border border-border bg-surface p-4">
-          <p className="text-xs text-subtle">Valor</p>
-          <p className="mt-2 font-mono text-2xl tabular-nums">{formatUsd(asset.currentValue)}</p>
-        </div>
-        <div className="rounded-none border border-border bg-surface p-4">
-          <p className="text-xs text-subtle">Costo</p>
-          <p className="mt-2 font-mono text-2xl tabular-nums">{formatUsd(asset.costBasis)}</p>
-        </div>
-        <div className="rounded-none border border-border bg-surface p-4">
-          <p className="text-xs text-subtle">P&L</p>
-          <p className={`mt-2 font-mono text-2xl tabular-nums ${pnl >= 0 ? "text-gain" : "text-loss"}`}>
+      <div className="grid grid-cols-3 gap-2">
+        <Monitor title="VALUE">
+          <p className="font-mono text-lg tabular-nums md:text-2xl">
+            {formatUsd(asset.currentValue)}
+          </p>
+        </Monitor>
+        <Monitor title="COST">
+          <p className="font-mono text-lg tabular-nums text-muted md:text-2xl">
+            {formatUsd(asset.costBasis)}
+          </p>
+        </Monitor>
+        <Monitor title="P&L">
+          <p
+            className={`font-mono text-lg tabular-nums md:text-2xl ${pnl >= 0 ? "text-gain" : "text-loss"}`}
+          >
             {pnl >= 0 ? "+" : ""}
             {pnl.toFixed(1)}%
           </p>
-        </div>
+          <p className="font-mono text-[11px] text-muted">
+            {formatUsd(asset.currentValue - asset.costBasis)}
+          </p>
+        </Monitor>
       </div>
 
-      <section className="mt-8 rounded-none border border-border bg-surface p-5">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-sm font-medium">Ingresos recurrentes</h2>
-          <Button size="sm" variant="secondary" onClick={() => setRecOpen(true)}>
+      <Monitor
+        title="RECURRING"
+        action={
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => setRecOpen(true)}
+          >
             <Plus className="size-3.5" /> Agregar
           </Button>
-        </div>
+        }
+      >
         {recurring.length === 0 ? (
-          <p className="py-6 text-sm text-muted">Nada programado. Alquileres y cupones van acá.</p>
+          <p className="py-6 text-center font-mono text-xs text-muted">
+            Nada programado. Alquileres y cupones van acá.
+          </p>
         ) : (
           <>
-            <ul className="divide-y divide-border">
+            <ul className="divide-y divide-border/50 font-mono text-[12px]">
               {recPager.slice.map((r) => (
-                <li key={r.id} className="flex items-center justify-between py-3">
-                  <div>
-                    <p className="text-sm text-fg">{r.name}</p>
-                    <p className="text-xs text-subtle">
+                <li
+                  key={r.id}
+                  className="flex items-center justify-between gap-2 py-1.5"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-fg">{r.name}</p>
+                    <p className="text-[11px] text-subtle">
                       {formatUsd(r.amount)} ·{" "}
-                      {FREQUENCIES.find((f) => f.value === r.frequency)?.label} · próximo{" "}
-                      {r.nextDate}
+                      {FREQUENCIES.find((f) => f.value === r.frequency)?.label}{" "}
+                      · próximo {r.nextDate}
                     </p>
                   </div>
                   <Button
@@ -121,12 +146,18 @@ function AssetDetail() {
                     size="icon-sm"
                     aria-label="Eliminar ingreso"
                     onClick={async () => {
-                      await deleteRecurring({ data: { id: r.id } });
-                      toast.success("Ingreso eliminado");
-                      await router.invalidate();
+                      try {
+                        await deleteRecurring({ data: { id: r.id } });
+                        toast.success("Ingreso eliminado");
+                        await router.invalidate();
+                      } catch (err) {
+                        toast.error(
+                          err instanceof Error ? err.message : "Error",
+                        );
+                      }
                     }}
                   >
-                    <Trash2 className="size-4 text-loss" />
+                    <Trash2 className="size-3.5 text-loss" />
                   </Button>
                 </li>
               ))}
@@ -138,16 +169,18 @@ function AssetDetail() {
               from={recPager.from}
               to={recPager.to}
               onChange={recPager.setPage}
+              className="mt-1"
             />
           </>
         )}
-      </section>
+      </Monitor>
 
       {asset.notes ? (
-        <section className="mt-6 rounded-none border border-border bg-surface p-5">
-          <h2 className="text-sm font-medium">Notas</h2>
-          <p className="mt-2 whitespace-pre-wrap text-sm text-muted">{asset.notes}</p>
-        </section>
+        <Monitor title="NOTES">
+          <p className="font-mono text-xs whitespace-pre-wrap text-muted">
+            {asset.notes}
+          </p>
+        </Monitor>
       ) : null}
 
       {edit ? (
@@ -190,30 +223,42 @@ function AssetDetail() {
         }}
       />
 
-      <Dialog open={recOpen} onOpenChange={setRecOpen} title="Nuevo ingreso recurrente">
+      <Dialog
+        open={recOpen}
+        onOpenChange={setRecOpen}
+        title="Nuevo ingreso recurrente"
+      >
         <form
           className="grid gap-4"
           onSubmit={async (e) => {
             e.preventDefault();
-            await upsertRecurring({
-              data: {
-                assetId: asset.id,
-                name: recName,
-                amount: Number(recAmount) || 0,
-                currency: recCur,
-                frequency: recFreq,
-                nextDate: recDate || new Date().toISOString().slice(0, 10),
-              },
-            });
-            toast.success("Ingreso agregado");
-            setRecOpen(false);
-            setRecName("");
-            setRecAmount("");
-            await router.invalidate();
+            try {
+              await upsertRecurring({
+                data: {
+                  assetId: asset.id,
+                  name: recName,
+                  amount: Number(recAmount) || 0,
+                  currency: recCur,
+                  frequency: recFreq,
+                  nextDate: recDate || new Date().toISOString().slice(0, 10),
+                },
+              });
+              toast.success("Ingreso agregado");
+              setRecOpen(false);
+              setRecName("");
+              setRecAmount("");
+              await router.invalidate();
+            } catch (err) {
+              toast.error(err instanceof Error ? err.message : "Error");
+            }
           }}
         >
           <Field label="Concepto">
-            <Input required value={recName} onChange={(e) => setRecName(e.target.value)} />
+            <Input
+              required
+              value={recName}
+              onChange={(e) => setRecName(e.target.value)}
+            />
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Monto">
@@ -226,7 +271,10 @@ function AssetDetail() {
               />
             </Field>
             <Field label="Moneda">
-              <Select value={recCur} onChange={(e) => setRecCur(e.target.value)}>
+              <Select
+                value={recCur}
+                onChange={(e) => setRecCur(e.target.value)}
+              >
                 {CURRENCIES.map((c) => (
                   <option key={c}>{c}</option>
                 ))}
@@ -234,7 +282,10 @@ function AssetDetail() {
             </Field>
           </div>
           <Field label="Frecuencia">
-            <Select value={recFreq} onChange={(e) => setRecFreq(e.target.value)}>
+            <Select
+              value={recFreq}
+              onChange={(e) => setRecFreq(e.target.value)}
+            >
               {FREQUENCIES.map((f) => (
                 <option key={f.value} value={f.value}>
                   {f.label}
@@ -243,7 +294,11 @@ function AssetDetail() {
             </Select>
           </Field>
           <Field label="Próxima fecha">
-            <Input type="date" value={recDate} onChange={(e) => setRecDate(e.target.value)} />
+            <Input
+              type="date"
+              value={recDate}
+              onChange={(e) => setRecDate(e.target.value)}
+            />
           </Field>
           <div className="flex justify-end">
             <Button type="submit">Guardar</Button>

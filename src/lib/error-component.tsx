@@ -1,21 +1,35 @@
-import type { ErrorComponentProps } from "@tanstack/react-router";
+import { type ErrorComponentProps, useRouter } from "@tanstack/react-router";
 import { TriangleAlert } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { UNAUTHORIZED } from "@/lib/server/auth";
 
-export function AppErrorComponent({ error }: ErrorComponentProps) {
+export function AppErrorComponent({ error, reset }: ErrorComponentProps) {
+  const router = useRouter();
+  const unauthorized = error.message.includes(UNAUTHORIZED);
   return (
-    <main
-      className={
-        "flex min-h-screen flex-col items-center justify-center gap-3 px-6 text-center " +
-        "bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50"
-      }
-    >
-      <span className="text-red-500" aria-hidden="true">
-        <TriangleAlert className="size-10" strokeWidth={2} />
-      </span>
-      <h1 className="text-lg font-semibold">Something went wrong</h1>
-      <p className="max-w-md text-sm break-words text-zinc-500 dark:text-zinc-400">
-        {error.message || "An unexpected error occurred. Try reloading the page."}
+    <main className="flex min-h-[60vh] flex-col items-center justify-center gap-3 px-6 text-center">
+      <TriangleAlert className="size-8 text-loss" aria-hidden="true" />
+      <h1 className="font-mono text-sm tracking-widest text-accent">
+        {unauthorized ? "SESIÓN EXPIRADA" : "ALGO SALIÓ MAL"}
+      </h1>
+      <p className="max-w-md font-mono text-xs break-words text-muted">
+        {unauthorized
+          ? "Volvé a ingresar el password."
+          : error.message || "Error inesperado."}
       </p>
+      <Button
+        variant="secondary"
+        onClick={() => {
+          if (unauthorized) {
+            window.location.assign("/login");
+            return;
+          }
+          reset();
+          void router.invalidate();
+        }}
+      >
+        {unauthorized ? "Ir al login" : "Reintentar"}
+      </Button>
     </main>
   );
 }

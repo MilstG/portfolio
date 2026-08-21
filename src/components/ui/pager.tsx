@@ -60,7 +60,7 @@ export function Pager({
   return (
     <div
       className={cn(
-        "flex items-center justify-between gap-2 border-t border-line pt-1.5 font-mono text-[10px] text-muted",
+        "flex items-center justify-between gap-2 border-t border-line pt-1.5 font-mono text-[11px] text-muted",
         className,
       )}
     >

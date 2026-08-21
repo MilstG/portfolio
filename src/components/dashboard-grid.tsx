@@ -1,5 +1,19 @@
-import { Eye, EyeOff, GripVertical, Columns2, Maximize2, Square, RotateCcw } from "lucide-react";
-import { useEffect, useMemo, useState, type DragEvent, type ReactNode } from "react";
+import {
+  Eye,
+  EyeOff,
+  GripVertical,
+  Columns2,
+  Maximize2,
+  Square,
+  RotateCcw,
+} from "lucide-react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type DragEvent,
+  type ReactNode,
+} from "react";
 import { cn } from "@/lib/utils";
 
 const STORAGE_KEY = "pat-dashboard-layout-v4";
@@ -113,8 +127,11 @@ function loadState(): LayoutState {
       if (v3) {
         const parsed = JSON.parse(v3) as string[];
         const known = new Set(DEFAULT_LAYOUT);
-        const order = parsed.filter((id): id is PanelId => known.has(id as PanelId));
-        for (const id of DEFAULT_LAYOUT) if (!order.includes(id)) order.push(id);
+        const order = parsed.filter((id): id is PanelId =>
+          known.has(id as PanelId),
+        );
+        for (const id of DEFAULT_LAYOUT)
+          if (!order.includes(id)) order.push(id);
         const state = { order, hidden: [], spans: { ...DEFAULT_SPANS } };
         saveState(state);
         return state;
@@ -123,9 +140,13 @@ function loadState(): LayoutState {
     }
     const parsed = JSON.parse(raw) as Partial<LayoutState>;
     const known = new Set(DEFAULT_LAYOUT);
-    const order = (parsed.order ?? []).filter((id): id is PanelId => known.has(id as PanelId));
+    const order = (parsed.order ?? []).filter((id): id is PanelId =>
+      known.has(id as PanelId),
+    );
     for (const id of DEFAULT_LAYOUT) if (!order.includes(id)) order.push(id);
-    const hidden = (parsed.hidden ?? []).filter((id): id is PanelId => known.has(id as PanelId));
+    const hidden = (parsed.hidden ?? []).filter((id): id is PanelId =>
+      known.has(id as PanelId),
+    );
     const spans: Partial<Record<PanelId, PanelSpan>> = { ...DEFAULT_SPANS };
     if (parsed.spans) {
       for (const [k, v] of Object.entries(parsed.spans)) {
@@ -166,7 +187,11 @@ function SpanIcon({ span }: { span: PanelSpan }) {
   return <Square className="size-3" />;
 }
 
-export function DashboardGrid({ panels }: { panels: Partial<Record<PanelId, ReactNode>> }) {
+export function DashboardGrid({
+  panels,
+}: {
+  panels: Partial<Record<PanelId, ReactNode>>;
+}) {
   const [state, setState] = useState<LayoutState>(defaultState);
   const [ready, setReady] = useState(false);
   const [dragId, setDragId] = useState<PanelId | null>(null);
@@ -260,15 +285,26 @@ export function DashboardGrid({ panels }: { panels: Partial<Record<PanelId, Reac
   }
 
   if (!ready) {
-    return <div className="font-mono text-xs text-muted">Cargando layout…</div>;
+    // Render the default layout during SSR/first paint; localStorage overrides
+    // after hydration. Avoids a blank dashboard while the layout loads.
+    return (
+      <div className="grid grid-flow-dense grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
+        {DEFAULT_LAYOUT.filter((id) => panels[id]).map((id) => (
+          <div key={id} className={spanClass(DEFAULT_SPANS[id] ?? 1)}>
+            {panels[id]}
+          </div>
+        ))}
+      </div>
+    );
   }
 
   return (
     <div className="flex flex-col gap-2">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-2 px-0.5">
-        <p className="font-mono text-[10px] tracking-widest text-muted">
-          DRAG · SIZE · HIDE · {visible.length}/{Object.keys(panels).filter((k) => panels[k as PanelId]).length}{" "}
+        <p className="font-mono text-[11px] tracking-widest text-muted">
+          DRAG · SIZE · HIDE · {visible.length}/
+          {Object.keys(panels).filter((k) => panels[k as PanelId]).length}{" "}
           visible
         </p>
         <div className="flex items-center gap-2">
@@ -276,11 +312,12 @@ export function DashboardGrid({ panels }: { panels: Partial<Record<PanelId, Reac
             <button
               type="button"
               onClick={() => setMenuOpen((v) => !v)}
-              className="inline-flex items-center gap-1 font-mono text-[10px] text-subtle hover:text-accent"
+              className="inline-flex items-center gap-1 font-mono text-[11px] text-subtle hover:text-accent"
               title="Mostrar paneles ocultos"
             >
               <Eye className="size-3" />
-              SHOW{hiddenAvailable.length > 0 ? ` (${hiddenAvailable.length})` : ""}
+              SHOW
+              {hiddenAvailable.length > 0 ? ` (${hiddenAvailable.length})` : ""}
             </button>
             {menuOpen ? (
               <>
@@ -292,7 +329,9 @@ export function DashboardGrid({ panels }: { panels: Partial<Record<PanelId, Reac
                 />
                 <div className="absolute right-0 top-full z-50 mt-1 min-w-[200px] border border-border bg-surface p-1 shadow-none">
                   {hiddenAvailable.length === 0 ? (
-                    <p className="px-2 py-1.5 font-mono text-[10px] text-muted">ningún panel oculto</p>
+                    <p className="px-2 py-1.5 font-mono text-[11px] text-muted">
+                      ningún panel oculto
+                    </p>
                   ) : (
                     <>
                       {hiddenAvailable.map((id) => (
@@ -300,7 +339,7 @@ export function DashboardGrid({ panels }: { panels: Partial<Record<PanelId, Reac
                           key={id}
                           type="button"
                           onClick={() => show(id)}
-                          className="flex w-full items-center gap-2 px-2 py-1 font-mono text-[10px] text-fg hover:bg-raised hover:text-accent"
+                          className="flex w-full items-center gap-2 px-2 py-1 font-mono text-[11px] text-fg hover:bg-raised hover:text-accent"
                         >
                           <Eye className="size-3 shrink-0" />
                           {PANEL_LABELS[id]}
@@ -309,7 +348,7 @@ export function DashboardGrid({ panels }: { panels: Partial<Record<PanelId, Reac
                       <button
                         type="button"
                         onClick={showAll}
-                        className="mt-0.5 flex w-full items-center gap-2 border-t border-line px-2 py-1.5 font-mono text-[10px] text-accent hover:bg-raised"
+                        className="mt-0.5 flex w-full items-center gap-2 border-t border-line px-2 py-1.5 font-mono text-[11px] text-accent hover:bg-raised"
                       >
                         SHOW ALL
                       </button>
@@ -322,7 +361,7 @@ export function DashboardGrid({ panels }: { panels: Partial<Record<PanelId, Reac
           <button
             type="button"
             onClick={reset}
-            className="inline-flex items-center gap-1 font-mono text-[10px] text-subtle hover:text-accent"
+            className="inline-flex items-center gap-1 font-mono text-[11px] text-subtle hover:text-accent"
             title="Reset layout, sizes y hidden"
           >
             <RotateCcw className="size-3" /> RESET
@@ -331,7 +370,7 @@ export function DashboardGrid({ panels }: { panels: Partial<Record<PanelId, Reac
       </div>
 
       {/* Grid */}
-      <div className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-flow-dense grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
         {visible.map((id) => {
           const node = panels[id];
           if (!node) return null;
@@ -351,11 +390,14 @@ export function DashboardGrid({ panels }: { panels: Partial<Record<PanelId, Reac
                 "relative group",
                 spanClass(span),
                 dragId === id && "opacity-50",
-                overId === id && dragId && dragId !== id && "ring-1 ring-accent",
+                overId === id &&
+                  dragId &&
+                  dragId !== id &&
+                  "ring-1 ring-accent",
               )}
             >
               {/* Panel chrome controls */}
-              <div className="absolute right-1 top-1 z-10 flex items-center gap-0.5 opacity-70 transition-opacity group-hover:opacity-100">
+              <div className="absolute top-0 right-7 z-10 flex h-7 items-center gap-0.5 bg-surface pl-1 opacity-60 transition-opacity group-hover:opacity-100">
                 <button
                   type="button"
                   onClick={(e) => {
@@ -396,11 +438,13 @@ export function DashboardGrid({ panels }: { panels: Partial<Record<PanelId, Reac
 
       {visible.length === 0 ? (
         <div className="border border-border bg-surface p-4 text-center">
-          <p className="font-mono text-xs text-muted">Todos los paneles están ocultos.</p>
+          <p className="font-mono text-xs text-muted">
+            Todos los paneles están ocultos.
+          </p>
           <button
             type="button"
             onClick={showAll}
-            className="mt-2 font-mono text-[10px] text-accent hover:underline"
+            className="mt-2 font-mono text-[11px] text-accent hover:underline"
           >
             SHOW ALL
           </button>

@@ -7,5 +7,10 @@ export function getRouter() {
     routeTree,
     defaultErrorComponent: AppErrorComponent,
     scrollRestoration: true,
+    // Every page loads the same portfolio payload; keep it fresh for 30s so
+    // tab switches are instant and preload on hover/touch.
+    defaultStaleTime: 30_000,
+    defaultPreload: "intent",
+    defaultPreloadStaleTime: 30_000,
   });
 }

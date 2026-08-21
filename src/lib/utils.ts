@@ -14,7 +14,11 @@ export function num(v: unknown): number {
   return 0;
 }
 
-export function toUsd(amount: number, currency: string, arsPerUsd: number): number {
+export function toUsd(
+  amount: number,
+  currency: string,
+  arsPerUsd: number,
+): number {
   const c = (currency || "USD").toUpperCase();
   if (c === "USD" || c === "USDT") return amount;
   if (c === "ARS") return arsPerUsd > 0 ? amount / arsPerUsd : 0;

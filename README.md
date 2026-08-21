@@ -1,43 +1,50 @@
 # Patrimonio
 
-Tracker de patrimonio (crypto, acciones, bonos, real estate, cash, flujo).
-UI tipo terminal. Datos en **PostgreSQL**.
+Tracker personal de patrimonio (crypto, acciones, bonos, real estate, cash y flujo de fondos)
+con UI estilo terminal. TanStack Start + React 19 + Tailwind 4, datos en **PostgreSQL**.
 
-## Railway
+## Stack
 
-El repo ya no es Next.js. El start command es el servidor Nitro.
-
-### Variables
-
-En el servicio de la **app** (no en el plugin de Postgres):
-
-| Variable | Valor |
+| Capa | Qué |
 |---|---|
-| `DATABASE_URL` | referencia a la Postgres de Railway |
+| App | [TanStack Start](https://tanstack.com/start) (router + server functions), React 19, Tailwind 4 |
+| Server | Nitro (`node-server`), `pg` contra Postgres. Sin `DATABASE_URL` usa PGLite embebido (en memoria) |
+| Schema | `migrations/*.sql`, aplicadas en orden por `scripts/migrate.mjs` (deploy) y por `src/lib/db.ts` (PGLite) |
+| Auth | PIN opcional → sesión server-side (cookie HttpOnly, 30 días). Ver `src/lib/auth.server.ts` |
 
-Si Railway no la linkeó: Variables → Add Reference → `DATABASE_URL` del plugin Postgres.
+## Estructura
 
-Opcional: `PGSSL=true` si el proxy público exige SSL.
+```
+migrations/          schema + seeds (una sola fuente de verdad)
+scripts/migrate.mjs  migrador para deploy (npm start lo corre antes de levantar)
+src/routes/          páginas: / (MONIT), /assets, /cash, /cashflow, /settings, /login
+src/lib/server/      server functions (portfolio.ts, extra-actions.ts, auth.ts)
+src/lib/             db.ts, auth.server.ts, portfolio-math.ts, analytics.ts, prices.ts
+src/components/      shell, dashboard-grid, forms, ui/ (button, dialog, input, monitor, pager, tip)
+public/              favicon, manifest PWA, íconos
+```
 
-### Deploy
-
-1. Railway sigue apuntando a este repo. Al pushear `main` rebuilda solo.
-2. El build corre `vite build`. Al arrancar, `npm start` aplica migraciones y levanta el server.
-3. Start command (ya está en `railway.json`): `npm start`
-
-Si el servicio todavía tiene settings de Next.js:
-
-- **Settings → Build**: Build Command = `npm run build`
-- **Settings → Deploy**: Start Command = `npm start`
-- Node 22+
-
-La primera migración **borra** las tablas viejas de Prisma y crea el schema nuevo, con seed de ejemplo. Tus rows de la versión anterior no se migran.
-
-### Local
+## Local
 
 ```bash
 npm install
-cp .env.example .env
-# pegá DATABASE_URL de Railway, o dejalo vacío (usa Postgres embebido)
-npm run dev
+cp .env.example .env      # dejá DATABASE_URL vacío para usar PGLite en memoria
+npm run dev               # http://localhost:8080
 ```
+
+Checks: `npm run typecheck`, `npm run lint`, `npm run build` (+ `npm run preview`).
+
+## Railway
+
+- **Build**: `npm run build` · **Start**: `npm start` (corre migraciones y levanta `.output/server/index.mjs`).
+- Variables del servicio: `DATABASE_URL` (referencia al plugin Postgres). Opcional `PGSSL=true`.
+- Node 22+ (`.nvmrc`, `nixpacks.toml`).
+
+## Seguridad
+
+- Con el PIN activado (CFG → PASSWORD LOCK) **todos** los server functions exigen una sesión válida
+  (`requireAuth` en `src/lib/server/auth.ts`). Sin PIN la app queda abierta: es una herramienta
+  de un solo usuario, activalo antes de exponerla a internet.
+- Hash del PIN: scrypt + salt. 5 intentos fallidos → bloqueo de 1 min con backoff exponencial.
+- Cambiar o quitar el PIN revoca todas las sesiones.
+- Headers: `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`.

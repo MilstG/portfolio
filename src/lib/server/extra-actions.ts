@@ -1,9 +1,11 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { getSql } from "@/lib/db";
+import { requireAuth } from "@/lib/server/auth";
 import { fetchCryptoUsd, fetchStockUsd } from "@/lib/prices";
 
 export const upsertLiability = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
   .validator(
     z.object({
       id: z.string().optional(),
@@ -46,6 +48,7 @@ export const upsertLiability = createServerFn({ method: "POST" })
   });
 
 export const deleteLiability = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
   .validator(z.object({ id: z.string() }))
   .handler(async ({ data }) => {
     const sql = await getSql();
@@ -54,44 +57,46 @@ export const deleteLiability = createServerFn({ method: "POST" })
   });
 
 export const importTransactionsCsv = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
   .validator(
     z.object({
-      rows: z.array(
-        z.object({
-          date: z.string(),
-          description: z.string().min(1),
-          amount: z.number(),
-          currency: z.string().default("USD"),
-          type: z.string().default("INCOME"),
-          category: z.string().optional().nullable(),
-        }),
-      ),
+      rows: z
+        .array(
+          z.object({
+            date: z.string().regex(/^\d{4}-\d{2}-\d{2}/),
+            description: z.string().trim().min(1).max(200),
+            amount: z.number().finite(),
+            currency: z.string().max(8).default("USD"),
+            type: z.string().max(16).default("INCOME"),
+            category: z.string().max(64).optional().nullable(),
+          }),
+        )
+        .max(5000),
     }),
   )
   .handler(async ({ data }) => {
     const sql = await getSql();
-    let inserted = 0;
-    for (const row of data.rows) {
-      if (!row.date || !row.description) continue;
-      await sql.query(
-        `insert into transactions (id, date, description, amount, currency, type, category)
-         values ($1,$2,$3,$4,$5,$6,$7)`,
-        [
-          crypto.randomUUID(),
-          row.date.slice(0, 10),
-          row.description.trim(),
-          row.amount,
-          row.currency || "USD",
-          row.type || "INCOME",
-          row.category || null,
-        ],
-      );
-      inserted += 1;
-    }
-    return { inserted };
+    const rows = data.rows.filter((r) => r.date && r.description);
+    if (rows.length === 0) return { inserted: 0 };
+    // One statement for the whole file instead of one round-trip per row.
+    await sql.query(
+      `insert into transactions (id, date, description, amount, currency, type, category)
+       select * from unnest($1::text[], $2::date[], $3::text[], $4::numeric[], $5::text[], $6::text[], $7::text[])`,
+      [
+        rows.map(() => crypto.randomUUID()),
+        rows.map((r) => r.date.slice(0, 10)),
+        rows.map((r) => r.description.trim()),
+        rows.map((r) => r.amount),
+        rows.map((r) => (r.currency || "USD").toUpperCase()),
+        rows.map((r) => (r.type || "INCOME").toUpperCase()),
+        rows.map((r) => r.category || null),
+      ],
+    );
+    return { inserted: rows.length };
   });
 
 export const upsertTaxLot = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
   .validator(
     z.object({
       id: z.string().optional(),
@@ -130,6 +135,7 @@ export const upsertTaxLot = createServerFn({ method: "POST" })
   });
 
 export const deleteTaxLot = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
   .validator(z.object({ id: z.string() }))
   .handler(async ({ data }) => {
     const sql = await getSql();
@@ -138,6 +144,7 @@ export const deleteTaxLot = createServerFn({ method: "POST" })
   });
 
 export const upsertWatchItem = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
   .validator(
     z.object({
       id: z.string().optional(),
@@ -171,6 +178,7 @@ export const upsertWatchItem = createServerFn({ method: "POST" })
   });
 
 export const deleteWatchItem = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
   .validator(z.object({ id: z.string() }))
   .handler(async ({ data }) => {
     const sql = await getSql();
@@ -178,15 +186,11 @@ export const deleteWatchItem = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-export const refreshWatchlistPrices = createServerFn({ method: "POST" }).handler(
-  async () => {
+export const refreshWatchlistPrices = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
+  .handler(async () => {
     const sql = await getSql();
-    let rows: Record<string, unknown>[] = [];
-    try {
-      rows = await sql`select id, ticker, type from watchlist`;
-    } catch {
-      return { updated: 0 };
-    }
+    const rows = await sql`select id, ticker, type from watchlist`;
     if (rows.length === 0) return { updated: 0 };
     const cryptoTickers = rows
       .filter((r) => String(r.type) === "CRYPTO")
@@ -198,18 +202,23 @@ export const refreshWatchlistPrices = createServerFn({ method: "POST" }).handler
       fetchCryptoUsd(cryptoTickers),
       fetchStockUsd(stockTickers),
     ]);
-    let updated = 0;
+    const ids: string[] = [];
+    const prices: number[] = [];
     for (const r of rows) {
       const ticker = String(r.ticker).toUpperCase();
       const price =
         String(r.type) === "CRYPTO" ? crypto[ticker] : stocks[ticker];
       if (price == null || price <= 0) continue;
-      await sql.query(
-        `update watchlist set last_price = $1, updated_at = now() where id = $2`,
-        [price, r.id],
-      );
-      updated += 1;
+      ids.push(String(r.id));
+      prices.push(price);
     }
-    return { updated };
-  },
-);
+    if (ids.length > 0) {
+      await sql.query(
+        `update watchlist w set last_price = v.price, updated_at = now()
+           from unnest($1::text[], $2::numeric[]) as v(id, price)
+          where w.id = v.id`,
+        [ids, prices],
+      );
+    }
+    return { updated: ids.length };
+  });
