@@ -275,6 +275,12 @@ async function writeTodaySnapshot() {
   );
 }
 
+async function sha256(text: string) {
+  const data = new TextEncoder().encode(text);
+  const buf = await crypto.subtle.digest("SHA-256", data);
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export const getPortfolio = createServerFn({ method: "GET" }).handler(async () => {
   return loadPortfolioInner();
 });
@@ -562,3 +568,45 @@ export const snapshotNow = createServerFn({ method: "POST" }).handler(async () =
   await writeTodaySnapshot();
   return { ok: true };
 });
+
+/** Set or clear the app password. Pass null/empty to disable. */
+export const setPin = createServerFn({ method: "POST" })
+  .validator(
+    z.object({
+      pin: z.string().min(4).max(32).nullable(),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const sql = await getSql();
+    // ensure row exists
+    await sql.query(
+      `insert into app_settings (id, pin_enabled) values (1, false)
+       on conflict (id) do nothing`,
+    );
+    if (!data.pin) {
+      await sql.query(
+        `update app_settings set pin_hash = null, pin_enabled = false, updated_at = now() where id = 1`,
+      );
+      return { ok: true, enabled: false };
+    }
+    const hash = await sha256(data.pin);
+    await sql.query(
+      `update app_settings set pin_hash = $1, pin_enabled = true, updated_at = now() where id = 1`,
+      [hash],
+    );
+    return { ok: true, enabled: true };
+  });
+
+/** Verify the password entered on the lock screen. */
+export const verifyPin = createServerFn({ method: "POST" })
+  .validator(z.object({ pin: z.string() }))
+  .handler(async ({ data }) => {
+    const sql = await getSql();
+    const rows = await safeQuery(
+      () => sql`select pin_hash, pin_enabled from app_settings where id = 1`,
+    );
+    const row = rows[0];
+    if (!row?.pin_enabled || !row.pin_hash) return { ok: true };
+    const hash = await sha256(data.pin);
+    return { ok: hash === String(row.pin_hash) };
+  });

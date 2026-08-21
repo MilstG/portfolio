@@ -10,6 +10,7 @@ export function PinGate({ children }: { children: ReactNode }) {
   const [locked, setLocked] = useState(false);
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -55,28 +56,38 @@ export function PinGate({ children }: { children: ReactNode }) {
           onSubmit={async (e) => {
             e.preventDefault();
             setError("");
-            const r = await verifyPin({ data: { pin } });
-            if (r.ok) {
-              sessionStorage.setItem(SESSION_KEY, "1");
-              setLocked(false);
-            } else {
-              setError("PIN incorrecto");
+            setPending(true);
+            try {
+              const r = await verifyPin({ data: { pin } });
+              if (r.ok) {
+                sessionStorage.setItem(SESSION_KEY, "1");
+                setLocked(false);
+              } else {
+                setError("Password incorrecto");
+                setPin("");
+              }
+            } catch {
+              setError("No se pudo verificar");
+            } finally {
+              setPending(false);
             }
           }}
         >
-          <p className="mb-3 font-mono text-xs tracking-widest text-accent">PIN REQUIRED</p>
-          <Field label="PIN">
+          <p className="mb-1 font-mono text-xs tracking-widest text-accent">PATRIMONIO</p>
+          <p className="mb-3 font-mono text-[10px] text-muted">PASSWORD REQUIRED</p>
+          <Field label="Password">
             <Input
               type="password"
-              inputMode="numeric"
               autoFocus
+              autoComplete="current-password"
               value={pin}
               onChange={(e) => setPin(e.target.value)}
+              placeholder="••••••••"
             />
           </Field>
           {error ? <p className="mt-2 font-mono text-[11px] text-loss">{error}</p> : null}
-          <Button type="submit" className="mt-3 w-full">
-            Unlock
+          <Button type="submit" className="mt-3 w-full" disabled={pending || !pin}>
+            {pending ? "…" : "Unlock"}
           </Button>
         </form>
       </div>

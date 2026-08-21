@@ -1,5 +1,6 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import { AuthProvider } from "@/lib/auth/provider";
+import { PinGate } from "@/components/pin-gate";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
 import { Shell } from "@/components/shell";
 import { Toaster } from "sonner";
@@ -35,10 +36,12 @@ export const Route = createRootRoute({
       <body className="bg-bg text-fg">
         <PreviewHostBridge />
         <AuthProvider>
-          <Shell>
-            <Outlet />
-          </Shell>
-          <Toaster theme="dark" position="bottom-right" />
+          <PinGate>
+            <Shell>
+              <Outlet />
+            </Shell>
+            <Toaster theme="dark" position="bottom-right" />
+          </PinGate>
         </AuthProvider>
         <Scripts />
       </body>
