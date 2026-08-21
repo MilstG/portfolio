@@ -610,3 +610,94 @@ export const verifyPin = createServerFn({ method: "POST" })
     const hash = await sha256(data.pin);
     return { ok: hash === String(row.pin_hash) };
   });
+
+const goalInput = z.object({
+  id: z.string().optional(),
+  name: z.string().min(1),
+  targetUsd: z.number().positive(),
+  targetDate: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
+});
+
+export const upsertGoal = createServerFn({ method: "POST" })
+  .validator(goalInput)
+  .handler(async ({ data }) => {
+    const sql = await getSql();
+    const id = data.id || crypto.randomUUID();
+    await sql.query(
+      `insert into goals (id, name, target_usd, target_date, notes)
+       values ($1,$2,$3,$4,$5)
+       on conflict (id) do update set
+         name = excluded.name,
+         target_usd = excluded.target_usd,
+         target_date = excluded.target_date,
+         notes = excluded.notes`,
+      [
+        id,
+        data.name.trim(),
+        data.targetUsd,
+        data.targetDate || null,
+        data.notes?.trim() || null,
+      ],
+    );
+    return { id };
+  });
+
+export const deleteGoal = createServerFn({ method: "POST" })
+  .validator(z.object({ id: z.string() }))
+  .handler(async ({ data }) => {
+    const sql = await getSql();
+    await sql`delete from goals where id = ${data.id}`;
+    return { ok: true };
+  });
+
+const allocInput = z.object({
+  assetType: z.string().min(1),
+  targetPct: z.number().min(0).max(100),
+});
+
+export const upsertAllocTarget = createServerFn({ method: "POST" })
+  .validator(allocInput)
+  .handler(async ({ data }) => {
+    const sql = await getSql();
+    await sql.query(
+      `insert into alloc_targets (asset_type, target_pct)
+       values ($1, $2)
+       on conflict (asset_type) do update set target_pct = excluded.target_pct`,
+      [data.assetType.trim().toUpperCase(), data.targetPct],
+    );
+    return { ok: true };
+  });
+
+export const deleteAllocTarget = createServerFn({ method: "POST" })
+  .validator(z.object({ assetType: z.string().min(1) }))
+  .handler(async ({ data }) => {
+    const sql = await getSql();
+    await sql`delete from alloc_targets where asset_type = ${data.assetType}`;
+    return { ok: true };
+  });
+
+/** Replace all alloc targets in one shot (sum should ideally be ~100). */
+export const saveAllocTargets = createServerFn({ method: "POST" })
+  .validator(
+    z.object({
+      targets: z.array(
+        z.object({
+          assetType: z.string().min(1),
+          targetPct: z.number().min(0).max(100),
+        }),
+      ),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const sql = await getSql();
+    for (const t of data.targets) {
+      await sql.query(
+        `insert into alloc_targets (asset_type, target_pct)
+         values ($1, $2)
+         on conflict (asset_type) do update set target_pct = excluded.target_pct`,
+        [t.assetType.trim().toUpperCase(), t.targetPct],
+      );
+    }
+    return { ok: true };
+  });
