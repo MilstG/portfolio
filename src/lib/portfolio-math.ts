@@ -256,6 +256,8 @@ export function inferIncomeKind(
   if (t === "COUPON") return "COUPON";
   if (t === "RENT") return "RENT";
   if (t === "DIVIDEND") return "DIVIDEND";
+  if (t === "AMORT") return "AMORT";
+  // Legacy: principal repayments used to be imported as SELL.
   if (t === "SELL") return "AMORT";
   const n = (name || "").toLowerCase();
   if (/cup[oó]n|coupon|interes|interés/.test(n)) return "COUPON";
@@ -332,6 +334,7 @@ const SCHEDULE_INCOME_TYPES = new Set([
   "RENT",
   "DIVIDEND",
   "INCOME",
+  "AMORT",
   "SELL",
 ]);
 

@@ -67,6 +67,18 @@ near(par.currentYield, 0.10, 1e-9, 'current yield 10%');
 if (par.maturity === '2029-01-01' && par.payments === 3) console.log('PASS maturity y conteo');
 else { console.log('FAIL maturity/conteo ->', par.maturity, par.payments); fail++; }
 
+// El capital devuelto NO es yield: un bono que amortiza dentro del año daba
+// current yield > 100% cuando se contaba la amortizacion como renta.
+const amortTx = (id, assetId, date, amount, type) => ({ id, date, description:'pago', amount,
+  currency:'USD', type, category:null, assetId, accountId:null });
+const withAmort = bondMetrics([asset('AM',10000)], [
+  amortTx('r1','AM','2026-06-01',400,'COUPON'),
+  amortTx('a1','AM','2026-06-01',10000,'AMORT'),
+], 1, '2026-01-01')[0];
+near(withAmort.currentYield, 0.04, 1e-9, 'current yield excluye amortizacion');
+if (withAmort.ytm !== null && withAmort.ytm > 0.05 && withAmort.ytm < 0.15) console.log('PASS YTM si usa el capital ->', (withAmort.ytm*100).toFixed(2)+'%');
+else { console.log('FAIL YTM con amort ->', withAmort.ytm); fail++; }
+
 // Sin schedule futuro no hay YTM que inventar
 const empty = bondMetrics([asset('X',1000)], [], 1, '2026-01-01')[0];
 isNull(empty.ytm, 'sin flujos futuros');

@@ -14,7 +14,19 @@ function years(fromIso: string, toIso: string): number {
 }
 
 /** Rows that actually pay the holder: coupons and principal repayments. */
-const PAYING_TYPES = new Set(["COUPON", "SELL", "INCOME", "RENT", "DIVIDEND"]);
+const PAYING_TYPES = new Set([
+  "COUPON",
+  "AMORT",
+  "SELL",
+  "INCOME",
+  "RENT",
+  "DIVIDEND",
+]);
+
+/** Principal, not income. Excluded from current yield: getting your own capital
+ *  back is not a return, and counting it produced yields above 100% on bonds
+ *  maturing within the year. */
+const PRINCIPAL_TYPES = new Set(["AMORT", "SELL"]);
 
 export type BondMetrics = {
   id: string;
@@ -61,7 +73,7 @@ export function bondMetrics(
     .map((b) => {
       const priceUsd = toUsd(b.currentValue, b.currency, fxAvg);
 
-      const future = transactions
+      const scheduled = transactions
         .filter(
           (t) =>
             t.assetId === b.id &&
@@ -72,12 +84,15 @@ export function bondMetrics(
         .map((t) => ({
           date: t.date,
           amount: toUsd(t.amount, t.currency, fxAvg),
+          principal: PRINCIPAL_TYPES.has(t.type),
         }))
         .sort((x, y) => x.date.localeCompare(y.date));
 
+      const future = scheduled.map(({ date, amount }) => ({ date, amount }));
       const totalFutureUsd = future.reduce((s, f) => s + f.amount, 0);
-      const next12m = future
-        .filter((f) => f.date <= oneYearOut)
+      // Coupons only — see PRINCIPAL_TYPES.
+      const next12m = scheduled
+        .filter((f) => !f.principal && f.date <= oneYearOut)
         .reduce((s, f) => s + f.amount, 0);
 
       let ytm: number | null = null;
