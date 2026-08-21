@@ -13,6 +13,7 @@
     "start": "node scripts/migrate.mjs && node .output/server/index.mjs",
     "db:migrate": "node scripts/migrate.mjs",
     "typecheck": "tsc --noEmit",
+    "test": "node scripts/test-returns.mjs",
     "lint": "eslint .",
     "format": "prettier --write ."
   },

@@ -40,7 +40,8 @@ export type PanelId =
   | "fxScenario"
   | "rebalance"
   | "costLadder"
-  | "goals";
+  | "goals"
+  | "returns";
 
 /** Column span: 1 = 1 col, 2 = 2 cols, 3 = full width. */
 export type PanelSpan = 1 | 2 | 3;
@@ -68,12 +69,14 @@ export const PANEL_LABELS: Record<PanelId, string> = {
   rebalance: "REBALANCE",
   costLadder: "COST LADDER",
   goals: "GOALS",
+  returns: "RETORNO ANUAL",
 };
 
 export const DEFAULT_LAYOUT: PanelId[] = [
   "allocation",
   "incomeWindow",
   "insights",
+  "returns",
   "holdings",
   "nwSeries",
   "projIncome",
@@ -96,6 +99,7 @@ export const DEFAULT_LAYOUT: PanelId[] = [
 ];
 
 const DEFAULT_SPANS: Partial<Record<PanelId, PanelSpan>> = {
+  returns: 3,
   holdings: 3,
   coupons24: 3,
   payCalendar: 3,

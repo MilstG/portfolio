@@ -21,6 +21,7 @@ import { Tip } from "@/components/ui/tip";
 import { Pager, usePager } from "@/components/ui/pager";
 import { getPortfolio } from "@/lib/server/portfolio";
 import { computeAnalytics } from "@/lib/analytics";
+import { portfolioReturn } from "@/lib/returns";
 import {
   computeDashboard,
   INCOME_KIND_META,
@@ -59,6 +60,7 @@ function Dashboard() {
   // Both passes walk every asset/tx several times — compute once per payload.
   const s = useMemo(() => computeDashboard(data), [data]);
   const a = useMemo(() => computeAnalytics(data), [data]);
+  const ret = useMemo(() => portfolioReturn(data), [data]);
   const debtUsd = useMemo(
     () =>
       data.liabilities.reduce(
@@ -91,6 +93,14 @@ function Dashboard() {
   const bondYieldsPager = usePager(a.bondYields, 10);
   const pnlContribPager = usePager(a.pnlContrib, 10);
   const costLadderPager = usePager(a.costLadder, 10);
+  const returnsRanked = useMemo(
+    () =>
+      [...ret.perAsset].sort(
+        (x, y) => (y.annualised ?? -Infinity) - (x.annualised ?? -Infinity),
+      ),
+    [ret.perAsset],
+  );
+  const returnsPager = usePager(returnsRanked, 6);
 
   return (
     <div className="flex flex-col gap-2">
@@ -1457,6 +1467,110 @@ function Dashboard() {
                   className="mt-1"
                 />
               </TableWrap>
+            </Monitor>
+          ),
+
+          returns: (
+            <Monitor
+              title="RETORNO ANUAL"
+              emphasis="primary"
+              action={
+                <Tip
+                  inline
+                  content="Retorno money-weighted (XIRR, actual/365). Cada posición aporta su costo como egreso en la fecha de compra, los ingresos ya cobrados como entradas, y el valor actual como saldo final."
+                >
+                  <Hint />
+                </Tip>
+              }
+            >
+              {ret.annualised === null ? (
+                <p className="font-mono text-xs text-muted">
+                  sin fecha de compra en ninguna posición — cargá purchaseDate
+                  para calcular retorno
+                </p>
+              ) : (
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:gap-6">
+                  <div className="shrink-0">
+                    <p
+                      className={`font-mono text-2xl font-medium tabular-nums md:text-3xl ${
+                        ret.annualised >= 0 ? "text-gain" : "text-loss"
+                      }`}
+                    >
+                      {formatPct(ret.annualised * 100)}
+                    </p>
+                    <p className="mt-1 font-mono text-[11px] text-subtle">
+                      anualizado · {ret.covered}/{ret.total} posiciones
+                    </p>
+                    {ret.simple !== null ? (
+                      <p className="font-mono text-[11px] text-muted">
+                        total {formatPct(ret.simple * 100)} sobre{" "}
+                        {formatUsd(ret.costUsd)}
+                      </p>
+                    ) : null}
+                    {ret.uncoveredValueUsd > 0 ? (
+                      <p className="font-mono text-[11px] text-subtle">
+                        sin fecha: {formatUsd(ret.uncoveredValueUsd)}
+                      </p>
+                    ) : null}
+                  </div>
+
+                  <TableWrap className="min-w-0 flex-1">
+                    <table className="w-full min-w-[420px] border-collapse font-mono text-[12px]">
+                      <thead>
+                        <tr className="border-b border-line text-left text-[11px] text-muted">
+                          <th className="py-1 pr-2">NAME</th>
+                          <th className="py-1 pr-2 text-right">AÑOS</th>
+                          <th className="py-1 pr-2 text-right">INGRESOS</th>
+                          <th className="py-1 text-right">ANUAL</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {returnsPager.slice.map((r) => (
+                          <tr
+                            key={r.id}
+                            className="border-b border-line/50 hover:bg-raised/40"
+                          >
+                            <td className="py-1 pr-2 text-fg">
+                              <span className="truncate">{r.name}</span>
+                            </td>
+                            <td className="py-1 pr-2 text-right tabular-nums text-muted">
+                              {r.holdingYears === null
+                                ? "—"
+                                : r.holdingYears.toFixed(1)}
+                            </td>
+                            <td className="py-1 pr-2 text-right tabular-nums text-muted">
+                              {r.incomeUsd > 0 ? formatUsd(r.incomeUsd) : "—"}
+                            </td>
+                            <td
+                              className={`py-1 text-right tabular-nums ${
+                                r.annualised === null
+                                  ? "text-subtle"
+                                  : r.annualised >= 0
+                                    ? "text-gain"
+                                    : "text-loss"
+                              }`}
+                            >
+                              {r.annualised !== null
+                                ? formatPct(r.annualised * 100)
+                                : r.tooShort
+                                  ? "< 1m"
+                                  : "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <Pager
+                      page={returnsPager.page}
+                      totalPages={returnsPager.totalPages}
+                      total={returnsPager.total}
+                      from={returnsPager.from}
+                      to={returnsPager.to}
+                      onChange={returnsPager.setPage}
+                    />
+                  </TableWrap>
+                </div>
+              )}
             </Monitor>
           ),
 
