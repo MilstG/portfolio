@@ -1,94 +1,43 @@
-# Patrimonio – Tracker de Assets Personales
+# Patrimonio
 
-App de finanzas personales para trackear crypto, stocks, bonos, real estate, múltiples cuentas de cash e ingresos recurrentes.
+Tracker de patrimonio (crypto, acciones, bonos, real estate, cash, flujo).
+UI tipo terminal. Datos en **PostgreSQL**.
 
-## Stack
-- Next.js 15 + Tailwind CSS 4 + Recharts
-- Prisma + PostgreSQL
-- Deploy en Railway
+## Railway
 
----
+El repo ya no es Next.js. El start command es el servidor Nitro.
 
-## Cómo deployar en Railway (paso a paso)
+### Variables
 
-### 1. Crear cuenta y proyecto en Railway
-1. Andá a https://railway.app y creá una cuenta (podés usar GitHub).
-2. Click en **New Project**.
+En el servicio de la **app** (no en el plugin de Postgres):
 
-### 2. Agregar la base de datos Postgres
-1. Dentro del proyecto → **+ New** → **Database** → **PostgreSQL**.
-2. Esperá a que se cree.
-3. Click en la base de datos → pestaña **Variables** o **Connect**.
-4. Copiá la variable `DATABASE_URL` (o `POSTGRES_URL`).  
-   Se ve algo así:  
-   `postgresql://postgres:xxxx@hostname:port/railway`
+| Variable | Valor |
+|---|---|
+| `DATABASE_URL` | referencia a la Postgres de Railway |
 
-### 3. Deployar la app desde GitHub (recomendado)
-1. Subí este código a un repositorio de GitHub.
-2. En Railway → **+ New** → **GitHub Repo** → elegí el repo.
-3. Railway detecta que es Next.js automáticamente.
+Si Railway no la linkeó: Variables → Add Reference → `DATABASE_URL` del plugin Postgres.
 
-### 4. Configurar variables de entorno
-En el servicio de la **app** (no de la base de datos):
+Opcional: `PGSSL=true` si el proxy público exige SSL.
 
-1. Andá a **Variables**.
-2. Agregá:
+### Deploy
 
-| Variable       | Valor                                      |
-|----------------|--------------------------------------------|
-| `DATABASE_URL` | La misma que copiaste de la base Postgres  |
+1. Railway sigue apuntando a este repo. Al pushear `main` rebuilda solo.
+2. El build corre `vite build` y después `npm run db:migrate` (crea las tablas).
+3. Start command (ya está en `railway.json`): `node .output/server/index.mjs`
 
-(Railway a veces tiene un botón “Add Reference” para linkear la variable automáticamente entre servicios. Usalo si aparece.)
+Si el servicio todavía tiene settings de Next.js:
 
-### 5. Generar las tablas y cargar datos de ejemplo
-Una vez que el deploy terminó:
+- **Settings → Build**: Build Command = `npm run build`
+- **Settings → Deploy**: Start Command = `node .output/server/index.mjs`
+- Node 20+
 
-1. En Railway abrí la pestaña **Settings** del servicio de la app.
-2. O usá el terminal de Railway (o desde tu máquina local con la DATABASE_URL):
+La primera migración **borra** las tablas viejas de Prisma y crea el schema nuevo, con seed de ejemplo. Tus rows de la versión anterior no se migran.
 
-```bash
-npx prisma db push
-npx prisma db seed
-```
-
-Esto crea todas las tablas y carga los datos de ejemplo (Bitcoin, depto, cuentas, etc.).
-
-### 6. Listo
-Tu app va a estar en una URL tipo:
-`https://patrimonio-production-xxxx.up.railway.app`
-
----
-
-## Desarrollo local
+### Local
 
 ```bash
 npm install
 cp .env.example .env
-# Editá .env y pegá tu DATABASE_URL de Railway
-
-npx prisma db push
-npx prisma db seed
+# pegá DATABASE_URL de Railway, o dejalo vacío (usa Postgres embebido)
 npm run dev
 ```
-
-Abrí http://localhost:3000
-
----
-
-## Estructura de la app
-
-- `/` → Dashboard
-- `/assets` → Lista de assets + botón “Agregar Asset”
-- `/assets/[id]` → Detalle + ingresos recurrentes
-- `/cash` → Cuentas de cash individuales + botón “Agregar Cuenta”
-- `/cashflow` → Ingresos y gastos
-- `/settings` → Configuración
-
----
-
-## Notas importantes
-
-- El tipo de cambio usado es el **promedio** de Oficial + Blue + MEP.
-- Los formularios de “Agregar” por ahora guardan en memoria (mock).  
-  En la próxima iteración se conectan a la base real vía Server Actions.
-- El schema de Prisma ya está 100% listo para producción.
