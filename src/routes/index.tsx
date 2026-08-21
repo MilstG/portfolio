@@ -1,40 +1,51 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { createFileRoute } from "@tanstack/react-router";
 import {
   Area,
   AreaChart,
   Bar,
   BarChart,
+  Cell,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
+import { Monitor } from "@/components/monitor";
 import { getPortfolio } from "@/lib/server/portfolio";
 import { computeDashboard } from "@/lib/portfolio-math";
-import { formatPct, formatUsd, toUsd } from "@/lib/utils";
+import { formatUsd, formatPct } from "@/lib/utils";
 
 export const Route = createFileRoute("/")({
   loader: () => getPortfolio(),
   component: Dashboard,
 });
 
-const ALLOC_COLOR: Record<string, string> = {
-  CRYPTO: "var(--color-crypto)",
-  STOCK: "var(--color-stock)",
-  BOND: "var(--color-bond)",
-  REAL_ESTATE: "var(--color-real)",
-  CASH: "var(--color-cash)",
-  OTHER: "var(--color-muted)",
-};
+const COLORS = ["#ff6d00", "#22c55e", "#3b82f6", "#a855f7", "#eab308", "#ef4444"];
 
 function Dashboard() {
   const data = Route.useLoaderData();
   const s = computeDashboard(data);
-  const chart = data.snapshots.map((x) => ({
+  // Always include live NW so the series is never blank after first load
+  const today = new Date().toISOString().slice(0, 10);
+  const snapPts = data.snapshots.map((x) => ({
+    date: x.date,
     label: x.date.slice(5, 7) + "/" + x.date.slice(2, 4),
     value: x.totalUsd,
   }));
+  if (!snapPts.some((x) => x.date === today)) {
+    snapPts.push({
+      date: today,
+      label: today.slice(5, 7) + "/" + today.slice(2, 4),
+      value: s.nw,
+    });
+  } else {
+    // refresh today's point with live NW
+    const last = snapPts.find((x) => x.date === today);
+    if (last) last.value = s.nw;
+  }
+  const chart = snapPts;
 
   return (
     <div className="flex flex-col gap-2">
@@ -48,16 +59,17 @@ function Dashboard() {
             {formatUsd(s.nw)}
           </p>
           <p className="mt-1 font-mono text-[10px] text-muted">
-            Δ {s.delta.delta >= 0 ? "+" : ""}
-            {formatUsd(s.delta.delta)} ({formatPct(s.delta.pct)}) vs prior
-          </p>
-          <p className="font-mono text-[10px] text-subtle">
-            FX AVG {data.fx.average.toFixed(0)} · OFC {data.fx.official.toFixed(0)} BLU{" "}
-            {data.fx.blue.toFixed(0)} MEP {data.fx.mep.toFixed(0)}
+            {s.delta.prior != null
+              ? `${formatPct(s.delta.pct)} vs prev · ${formatUsd(s.delta.delta)}`
+              : "sin snapshot previo"}
           </p>
         </Monitor>
-        <Monitor title="PNL VS COST">
-          <p className={`font-mono text-xl tabular-nums ${s.pnl >= 0 ? "text-gain" : "text-loss"}`}>
+        <Monitor title="P&L">
+          <p
+            className={`font-mono text-xl tabular-nums ${
+              s.pnl >= 0 ? "text-gain" : "text-loss"
+            }`}
+          >
             {formatUsd(s.pnl)}
           </p>
           <p className="font-mono text-[10px] text-subtle">
@@ -99,180 +111,117 @@ function Dashboard() {
       </div>
 
       <div className="grid gap-2 lg:grid-cols-3">
-        <Monitor title="INSIGHTS" className="lg:col-span-2">
-          <ul className="space-y-1 font-mono text-[11px] text-fg">
+        <Monitor title="ALLOCATION">
+          <div className="flex h-40 items-center gap-3">
+            <div className="h-36 w-36 shrink-0">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={s.alloc}
+                    dataKey="value"
+                    nameKey="name"
+                    innerRadius={28}
+                    outerRadius={55}
+                    stroke="#000"
+                    strokeWidth={1}
+                  >
+                    {s.alloc.map((_, i) => (
+                      <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{
+                      background: "#000",
+                      border: "1px solid #ff6d00",
+                      borderRadius: 0,
+                      fontSize: 11,
+                      fontFamily: "IBM Plex Mono",
+                    }}
+                    formatter={(v: number) => formatUsd(v)}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="flex flex-1 flex-col gap-1 overflow-hidden">
+              {s.alloc.map((a, i) => (
+                <div key={a.key} className="flex items-center gap-2 font-mono text-[10px]">
+                  <span
+                    className="h-2 w-2 shrink-0"
+                    style={{ background: COLORS[i % COLORS.length] }}
+                  />
+                  <span className="w-12 text-muted">{a.name}</span>
+                  <span className="flex-1 truncate text-fg">{formatUsd(a.value)}</span>
+                  <span className="text-subtle">
+                    {((a.value / s.allocTotal) * 100).toFixed(0)}%
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Monitor>
+
+        <Monitor title="INCOME WINDOW">
+          <div className="flex h-40 flex-col justify-between">
+            <div>
+              <p className="font-mono text-[10px] text-muted">NEXT 30D</p>
+              <p className="font-mono text-2xl tabular-nums text-gain">{formatUsd(s.next30)}</p>
+            </div>
+            <div>
+              <p className="font-mono text-[10px] text-muted">NEXT 90D</p>
+              <p className="font-mono text-xl tabular-nums text-fg">{formatUsd(s.next90)}</p>
+            </div>
+            <div className="border-t border-line pt-2">
+              <p className="font-mono text-[10px] text-muted">UPCOMING</p>
+              {s.projected.slice(0, 4).map((e, i) => (
+                <div key={i} className="flex justify-between font-mono text-[10px]">
+                  <span className="truncate text-subtle">{e.date.slice(5)} · {e.name}</span>
+                  <span className="text-gain">{formatUsd(e.amountUsd)}</span>
+                </div>
+              ))}
+              {s.projected.length === 0 ? (
+                <p className="font-mono text-[10px] text-muted">sin proyecciones</p>
+              ) : null}
+            </div>
+          </div>
+        </Monitor>
+
+        <Monitor title="INSIGHTS">
+          <ul className="flex h-40 flex-col gap-1.5 overflow-auto">
             {s.insights.map((line, i) => (
-              <li key={i} className="border-b border-border/40 py-1 text-muted">
-                <span className="mr-2 text-accent">{String(i + 1).padStart(2, "0")}</span>
-                {line}
+              <li key={i} className="font-mono text-[11px] leading-snug text-fg">
+                <span className="text-accent">›</span> {line}
               </li>
             ))}
-            {s.insights.length === 0 ? (
-              <li className="py-4 text-center text-subtle">Sin señales todavía.</li>
-            ) : null}
           </ul>
         </Monitor>
-        <Monitor title="INCOME WINDOW">
-          <Row label="NEXT 30D" value={formatUsd(s.next30)} up={s.next30 >= 0} />
-          <Row label="NEXT 90D" value={formatUsd(s.next90)} up={s.next90 >= 0} />
-          <Row label="RECUR / MO" value={formatUsd(s.monthly)} up />
-          <Row label="ANNUAL" value={formatUsd(s.annualIncome)} up />
-          <div className="mt-2 border-t border-border/60 pt-2">
-            <p className="mb-1 font-mono text-[10px] tracking-widest text-accent">UPCOMING</p>
-            {s.projected.slice(0, 4).map((e, i) => (
-              <div
-                key={`${e.date}-${e.name}-${i}`}
-                className="flex justify-between gap-2 border-b border-border/40 py-0.5 font-mono text-[10px]"
-              >
-                <span className="truncate text-muted">
-                  {e.date.slice(5)} · {e.name}
-                </span>
-                <span className="tabular-nums text-gain">{formatUsd(e.amountUsd)}</span>
-              </div>
-            ))}
-            {s.projected.length === 0 ? (
-              <p className="font-mono text-[10px] text-subtle">Sin eventos recurrentes.</p>
-            ) : null}
-          </div>
-        </Monitor>
       </div>
 
-      <div className="grid gap-2 lg:grid-cols-3">
-        <Monitor title="ALLOC">
-          <div className="flex h-2 overflow-hidden bg-raised">
-            {s.alloc.map((b) => (
-              <div
-                key={b.key}
-                style={{
-                  width: `${(b.value / s.allocTotal) * 100}%`,
-                  background: ALLOC_COLOR[b.key] || "#666",
-                }}
-                title={b.name}
-              />
-            ))}
-          </div>
-          <table className="mt-2 w-full font-mono text-[11px]">
-            <tbody>
-              {s.alloc.map((b) => (
-                <tr key={b.key} className="border-b border-border/60">
-                  <td className="py-1">
-                    <span
-                      className="mr-2 inline-block size-1.5"
-                      style={{ background: ALLOC_COLOR[b.key] || "#666" }}
-                    />
-                    {b.name}
-                  </td>
-                  <td className="py-1 text-right tabular-nums text-muted">
-                    {((b.value / s.allocTotal) * 100).toFixed(1)}%
-                  </td>
-                  <td className="py-1 text-right tabular-nums">{formatUsd(b.value)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Monitor>
-        <Monitor title="CURRENCY">
-          <table className="w-full font-mono text-[11px]">
-            <tbody>
-              {s.currencies.map((c) => (
-                <tr key={c.code} className="border-b border-border/60">
-                  <td className="py-1 text-accent">{c.code}</td>
-                  <td className="py-1 text-right tabular-nums text-muted">
-                    {c.weight.toFixed(1)}%
-                  </td>
-                  <td className="py-1 text-right tabular-nums">{formatUsd(c.valueUsd)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <div className="mt-2 border-t border-border/60 pt-2 font-mono text-[10px] text-muted">
-            <div className="flex justify-between">
-              <span>LIQUID</span>
-              <span className="tabular-nums text-fg">
-                {formatUsd(s.liq.liquid)} · {s.liq.liquidPct.toFixed(0)}%
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span>ILLIQUID</span>
-              <span className="tabular-nums text-fg">
-                {formatUsd(s.liq.illiquid)} · {s.liq.illiquidPct.toFixed(0)}%
-              </span>
-            </div>
-          </div>
-        </Monitor>
-        <Monitor title="PNL BY CLASS">
-          <table className="w-full font-mono text-[11px]">
-            <tbody>
-              {s.byType.map((r) => (
-                <tr key={r.type} className="border-b border-border/60">
-                  <td className="py-1">{r.type}</td>
-                  <td
-                    className={`py-1 text-right tabular-nums ${
-                      r.pnl >= 0 ? "text-gain" : "text-loss"
-                    }`}
-                  >
-                    {formatUsd(r.pnl)}
-                  </td>
-                  <td
-                    className={`py-1 text-right tabular-nums ${
-                      r.pnlPct >= 0 ? "text-gain" : "text-loss"
-                    }`}
-                  >
-                    {formatPct(r.pnlPct)}
-                  </td>
-                </tr>
-              ))}
-              {s.byType.length === 0 ? (
-                <tr>
-                  <td className="py-4 text-center text-subtle" colSpan={3}>
-                    Sin activos
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </Monitor>
-      </div>
-
-      <Monitor title="BOOK · RANKED BY VALUE">
+      <Monitor title="HOLDINGS RANK">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[520px] font-mono text-[11px]">
+          <table className="w-full min-w-[640px] border-collapse font-mono text-[11px]">
             <thead>
-              <tr className="border-b border-border text-left text-[10px] tracking-widest text-accent">
+              <tr className="border-b border-line text-left text-[10px] text-muted">
                 <th className="py-1 pr-2">#</th>
                 <th className="py-1 pr-2">NAME</th>
                 <th className="py-1 pr-2">TYPE</th>
                 <th className="py-1 pr-2 text-right">VALUE</th>
-                <th className="py-1 pr-2 text-right">WGT</th>
-                <th className="py-1 pr-2 text-right">PNL</th>
-                <th className="py-1 text-right">%</th>
+                <th className="py-1 pr-2 text-right">P&L</th>
+                <th className="py-1 pr-2 text-right">%</th>
+                <th className="py-1 text-right">WGT</th>
               </tr>
             </thead>
             <tbody>
-              {s.holdings.slice(0, 12).map((h, i) => (
-                <tr key={h.id} className="border-b border-border/50">
-                  <td className="py-1 pr-2 text-subtle">{String(i + 1).padStart(2, "0")}</td>
-                  <td className="max-w-[160px] truncate py-1 pr-2">
-                    {h.type !== "CASH" ? (
-                      <Link
-                        to="/assets/$id"
-                        params={{ id: h.id }}
-                        className="text-fg hover:text-accent"
-                      >
-                        {h.ticker || h.name}
-                      </Link>
-                    ) : (
-                      <span className="text-fg">{h.name}</span>
-                    )}
-                    {h.type !== "CASH" && h.ticker ? (
-                      <span className="ml-1 text-[10px] text-subtle">{h.name}</span>
+              {s.holdings.map((h, i) => (
+                <tr key={h.id} className="border-b border-line/50">
+                  <td className="py-1 pr-2 text-subtle">{i + 1}</td>
+                  <td className="py-1 pr-2">
+                    <span className="text-fg">{h.name}</span>
+                    {h.ticker ? (
+                      <span className="ml-1 text-subtle">{h.ticker}</span>
                     ) : null}
                   </td>
                   <td className="py-1 pr-2 text-muted">{h.type}</td>
                   <td className="py-1 pr-2 text-right tabular-nums">{formatUsd(h.valueUsd)}</td>
-                  <td className="py-1 pr-2 text-right tabular-nums text-muted">
-                    {h.weight.toFixed(1)}%
-                  </td>
                   <td
                     className={`py-1 pr-2 text-right tabular-nums ${
                       h.pnlUsd >= 0 ? "text-gain" : "text-loss"
@@ -281,11 +230,14 @@ function Dashboard() {
                     {formatUsd(h.pnlUsd)}
                   </td>
                   <td
-                    className={`py-1 text-right tabular-nums ${
+                    className={`py-1 pr-2 text-right tabular-nums ${
                       h.pnlPct >= 0 ? "text-gain" : "text-loss"
                     }`}
                   >
                     {formatPct(h.pnlPct)}
+                  </td>
+                  <td className="py-1 text-right tabular-nums text-subtle">
+                    {h.weight.toFixed(1)}%
                   </td>
                 </tr>
               ))}
@@ -297,7 +249,7 @@ function Dashboard() {
       <div className="grid gap-2 lg:grid-cols-3">
         <Monitor title="NW SERIES">
           <div className="h-36">
-            {chart.length > 1 ? (
+            {chart.length >= 1 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={chart} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
                   <XAxis
@@ -339,10 +291,9 @@ function Dashboard() {
                 <BarChart data={s.projMonths} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
                   <XAxis
                     dataKey="label"
-                    tick={{ fill: "#6b7280", fontSize: 9, fontFamily: "IBM Plex Mono" }}
+                    tick={{ fill: "#6b7280", fontSize: 10, fontFamily: "IBM Plex Mono" }}
                     axisLine={false}
                     tickLine={false}
-                    interval={1}
                   />
                   <YAxis hide />
                   <Tooltip
@@ -353,82 +304,41 @@ function Dashboard() {
                       fontSize: 11,
                       fontFamily: "IBM Plex Mono",
                     }}
-                    formatter={(v: number) => [formatUsd(v), "IN"]}
+                    formatter={(v: number) => [formatUsd(v), "income"]}
                   />
-                  <Bar dataKey="total" fill="#00e676" fillOpacity={0.85} />
+                  <Bar dataKey="total" fill="#ff6d00" />
                 </BarChart>
               </ResponsiveContainer>
             ) : (
-              <p className="font-mono text-xs text-muted">SIN PROYECCIÓN</p>
+              <p className="font-mono text-xs text-muted">NO PROJECTION</p>
             )}
           </div>
         </Monitor>
-        <Monitor
-          title="TICKER"
-          extra={
-            <Link to="/cashflow" className="font-mono text-[10px] text-accent hover:underline">
-              FLUJO {">"}
-            </Link>
-          }
-        >
-          <table className="w-full font-mono text-[11px]">
-            <tbody>
-              {data.transactions.slice(0, 8).map((t) => (
-                <tr key={t.id} className="border-b border-border/60">
-                  <td className="truncate py-1 pr-2 text-muted">{t.date.slice(5)}</td>
-                  <td className="truncate py-1">{t.description}</td>
-                  <td
-                    className={`py-1 text-right tabular-nums ${
-                      t.amount >= 0 ? "text-gain" : "text-loss"
-                    }`}
-                  >
-                    {t.amount >= 0 ? "+" : ""}
-                    {formatUsd(Math.abs(toUsd(t.amount, t.currency, data.fx.average)))}
-                  </td>
-                </tr>
-              ))}
-              {data.transactions.length === 0 ? (
-                <tr>
-                  <td className="py-4 text-center text-subtle" colSpan={3}>
-                    Sin movimientos
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
+        <Monitor title="P&L BY TYPE">
+          <div className="flex h-36 flex-col justify-center gap-2">
+            {s.byType.map((t) => (
+              <div key={t.type} className="flex items-center gap-2 font-mono text-[11px]">
+                <span className="w-16 text-muted">{t.type.slice(0, 8)}</span>
+                <div className="h-2 flex-1 bg-line">
+                  <div
+                    className="h-2"
+                    style={{
+                      width: `${Math.min(100, Math.abs(t.pnlPct))}%`,
+                      background: t.pnl >= 0 ? "#22c55e" : "#ef4444",
+                    }}
+                  />
+                </div>
+                <span className={t.pnl >= 0 ? "text-gain" : "text-loss"}>
+                  {formatPct(t.pnlPct)}
+                </span>
+              </div>
+            ))}
+            {s.byType.length === 0 ? (
+              <p className="font-mono text-xs text-muted">sin assets</p>
+            ) : null}
+          </div>
         </Monitor>
       </div>
-    </div>
-  );
-}
-
-function Monitor({
-  title,
-  children,
-  extra,
-  className = "",
-}: {
-  title: string;
-  children: ReactNode;
-  extra?: ReactNode;
-  className?: string;
-}) {
-  return (
-    <section className={`border border-border bg-surface ${className}`}>
-      <header className="flex items-center justify-between border-b border-border bg-raised px-2 py-1">
-        <h2 className="font-mono text-[10px] tracking-widest text-accent">{title}</h2>
-        {extra}
-      </header>
-      <div className="p-2">{children}</div>
-    </section>
-  );
-}
-
-function Row({ label, value, up }: { label: string; value: string; up: boolean }) {
-  return (
-    <div className="flex items-center justify-between border-b border-border/60 py-1 font-mono text-[11px]">
-      <span className="truncate text-muted">{label}</span>
-      <span className={`tabular-nums ${up ? "text-gain" : "text-loss"}`}>{value}</span>
     </div>
   );
 }
