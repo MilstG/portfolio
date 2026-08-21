@@ -29,8 +29,10 @@ import {
   deleteRecurring,
   deleteTransaction,
   getPortfolio,
+  importTransactionsCsv,
   upsertRecurring,
 } from "@/lib/server/portfolio";
+import { paymentCalendar } from "@/lib/analytics";
 import { CURRENCIES, FREQUENCIES, TX_TYPES, formatUsd, toUsd } from "@/lib/utils";
 
 export const Route = createFileRoute("/cashflow")({
@@ -56,7 +58,13 @@ function CashflowPage() {
   const [recDate, setRecDate] = useState(new Date().toISOString().slice(0, 10));
   const [recAssetId, setRecAssetId] = useState(data.assets[0]?.id ?? "");
   const [recAccountId, setRecAccountId] = useState("");
+  const [recDirection, setRecDirection] = useState<"INCOME" | "EXPENSE">("INCOME");
   const [pending, setPending] = useState(false);
+  const [csvText, setCsvText] = useState("");
+  const [csvPending, setCsvPending] = useState(false);
+  const [quickAmt, setQuickAmt] = useState("");
+  const [quickDesc, setQuickDesc] = useState("");
+  const [quickType, setQuickType] = useState("EXPENSE");
 
   const assetById = useMemo(() => {
     const m = new Map<string, string>();
@@ -78,7 +86,8 @@ function CashflowPage() {
     const series = monthlyTxSeries(data.transactions, data.fx.average, 6);
     const cats = categoryBreakdown(data.transactions, data.fx.average);
     const projectedTotal = projected.reduce((s, e) => s + e.amountUsd, 0);
-    return { totals, projected, projStacked, projKinds, series, cats, projectedTotal };
+    const calendar = paymentCalendar(projected, 12);
+    return { totals, projected, projStacked, projKinds, series, cats, projectedTotal, calendar };
   }, [data]);
 
   const recPager = usePager(data.recurring, 10);
@@ -113,15 +122,130 @@ function CashflowPage() {
         <Kpi label="PROJ 12M" value={formatUsd(stats.projectedTotal)} tone="accent" />
       </div>
 
+      <form
+        className="flex flex-wrap items-end gap-2 border border-border bg-surface p-2 md:hidden"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          const raw = Number(quickAmt) || 0;
+          if (!quickDesc.trim() || !raw) return;
+          const signed =
+            quickType === "EXPENSE" || quickType === "BUY" || quickType === "TRANSFER"
+              ? -Math.abs(raw)
+              : Math.abs(raw);
+          await addTransaction({
+            data: {
+              description: quickDesc.trim(),
+              amount: signed,
+              currency: "USD",
+              type: quickType,
+              category: quickType,
+              date: new Date().toISOString().slice(0, 10),
+            },
+          });
+          toast.success("OK");
+          setQuickAmt("");
+          setQuickDesc("");
+          await router.invalidate();
+        }}
+      >
+        <Input className="min-w-0 flex-1" placeholder="Concepto" value={quickDesc} onChange={(e) => setQuickDesc(e.target.value)} />
+        <Input className="w-24" type="number" step="any" placeholder="Monto" value={quickAmt} onChange={(e) => setQuickAmt(e.target.value)} />
+        <Select className="w-28" value={quickType} onChange={(e) => setQuickType(e.target.value)}>
+          <option value="EXPENSE">Gasto</option>
+          <option value="INCOME">Ingreso</option>
+          <option value="COUPON">Cupón</option>
+        </Select>
+        <Button type="submit" size="sm">+</Button>
+      </form>
+
+      {stats.calendar ? (
+        <Panel title="PAYMENT CALENDAR · 12M">
+          <div className="grid grid-cols-4 gap-1 sm:grid-cols-6">
+            {stats.calendar.map((c) => (
+              <div
+                key={c.key}
+                className={`border border-border p-1.5 text-center ${c.total > 0 ? "bg-raised" : "bg-surface"}`}
+                title={`${c.count} pagos`}
+              >
+                <p className="font-mono text-[9px] text-subtle">{c.label}</p>
+                <p className={`font-mono text-[10px] tabular-nums ${c.total > 0 ? "text-gain" : "text-muted"}`}>
+                  {c.total > 0 ? formatUsd(c.total) : "—"}
+                </p>
+                {c.count > 0 ? <p className="font-mono text-[8px] text-subtle">{c.count}x</p> : null}
+              </div>
+            ))}
+          </div>
+        </Panel>
+      ) : null}
+
+      <Panel title="IMPORT CSV">
+        <p className="mb-2 font-mono text-[10px] text-muted">
+          Formato: date,description,amount,currency,type (header opcional).
+        </p>
+        <textarea
+          className="mb-2 h-20 w-full border border-border bg-bg p-2 font-mono text-[11px] text-fg"
+          placeholder={"2026-09-01,Cupón AL30,1250,USD,COUPON"}
+          value={csvText}
+          onChange={(e) => setCsvText(e.target.value)}
+        />
+        <Button
+          type="button"
+          disabled={csvPending || !csvText.trim()}
+          onClick={async () => {
+            const lines = csvText.trim().split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+            if (!lines.length) return;
+            const start = /date/i.test(lines[0]) ? 1 : 0;
+            const rows: {
+              date: string;
+              description: string;
+              amount: number;
+              currency: string;
+              type: string;
+              category: string | null;
+            }[] = [];
+            for (let i = start; i < lines.length; i++) {
+              const parts = lines[i].split(",").map((x) => x.trim().replace(/^"|"$/g, ""));
+              if (parts.length < 3) continue;
+              const [d, description, amountStr, cur = "USD", txType = "INCOME"] = parts;
+              const amt = Number(amountStr);
+              if (!d || !description || !Number.isFinite(amt)) continue;
+              rows.push({
+                date: d.slice(0, 10),
+                description,
+                amount: amt,
+                currency: cur || "USD",
+                type: txType || "INCOME",
+                category: txType || null,
+              });
+            }
+            if (!rows.length) {
+              toast.error("No se parsearon filas");
+              return;
+            }
+            setCsvPending(true);
+            try {
+              const r = await importTransactionsCsv({ data: { rows } });
+              toast.success(`Importadas ${r.inserted} filas`);
+              setCsvText("");
+              await router.invalidate();
+            } catch (err) {
+              toast.error(err instanceof Error ? err.message : "Error import");
+            } finally {
+              setCsvPending(false);
+            }
+          }}
+        >
+          {csvPending ? "Importando…" : "Importar CSV"}
+        </Button>
+      </Panel>
+
       <Panel title="RECURRING · MAPPED TO ASSETS">
         {data.assets.length === 0 ? (
           <p className="py-6 text-center font-mono text-xs text-muted">
-            Primero cargá un activo en <Link to="/assets" className="text-accent underline">POS</Link> y después mappeá el flujo acá.
+            Primero cargá un activo en <Link to="/assets" className="text-accent underline">POS</Link>.
           </p>
         ) : data.recurring.length === 0 ? (
-          <p className="py-6 text-center font-mono text-xs text-muted">
-            Sin flujos recurrentes. Usá RECURRING para mappear alquiler/cupón a un activo existente.
-          </p>
+          <p className="py-6 text-center font-mono text-xs text-muted">Sin flujos recurrentes.</p>
         ) : (
           <>
             <table className="w-full font-mono text-[11px]">
@@ -203,35 +327,11 @@ function CashflowPage() {
                 <div className="min-h-0 flex-1">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={stats.projStacked} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-                      <XAxis
-                        dataKey="label"
-                        tick={{ fill: "#6b7280", fontSize: 9, fontFamily: "IBM Plex Mono" }}
-                        axisLine={false}
-                        tickLine={false}
-                        interval={1}
-                      />
+                      <XAxis dataKey="label" tick={{ fill: "#6b7280", fontSize: 9, fontFamily: "IBM Plex Mono" }} axisLine={false} tickLine={false} interval={1} />
                       <YAxis hide />
-                      <Tooltip
-                        contentStyle={{
-                          background: "#000",
-                          border: "1px solid #ff6d00",
-                          borderRadius: 0,
-                          fontSize: 11,
-                          fontFamily: "IBM Plex Mono",
-                        }}
-                        formatter={(v: number, name: string) => [
-                          formatUsd(v),
-                          INCOME_KIND_META[name as IncomeKind]?.label ?? name,
-                        ]}
-                      />
+                      <Tooltip contentStyle={{ background: "#000", border: "1px solid #ff6d00", borderRadius: 0, fontSize: 11, fontFamily: "IBM Plex Mono" }} formatter={(v: number, name: string) => [formatUsd(v), INCOME_KIND_META[name as IncomeKind]?.label ?? name]} />
                       {stats.projKinds.map((k) => (
-                        <Bar
-                          key={k}
-                          dataKey={k}
-                          stackId="inc"
-                          fill={INCOME_KIND_META[k].color}
-                          fillOpacity={0.9}
-                        />
+                        <Bar key={k} dataKey={k} stackId="inc" fill={INCOME_KIND_META[k].color} fillOpacity={0.9} />
                       ))}
                     </BarChart>
                   </ResponsiveContainer>
@@ -239,19 +339,14 @@ function CashflowPage() {
                 <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 border-t border-line pt-1">
                   {stats.projKinds.map((k) => (
                     <span key={k} className="flex items-center gap-1 font-mono text-[9px] text-muted">
-                      <span
-                        className="inline-block h-1.5 w-1.5"
-                        style={{ background: INCOME_KIND_META[k].color }}
-                      />
+                      <span className="inline-block h-1.5 w-1.5" style={{ background: INCOME_KIND_META[k].color }} />
                       {INCOME_KIND_META[k].label}
                     </span>
                   ))}
                 </div>
               </>
             ) : (
-              <p className="py-8 text-center font-mono text-xs text-muted">
-                Mappeá ingresos recurrentes a tus activos.
-              </p>
+              <p className="py-8 text-center font-mono text-xs text-muted">Mappeá ingresos recurrentes a tus activos.</p>
             )}
           </div>
         </Panel>
@@ -278,9 +373,7 @@ function CashflowPage() {
                 </tr>
               ))}
               {eventPager.total === 0 ? (
-                <tr>
-                  <td className="py-8 text-center text-subtle" colSpan={4}>Sin eventos proyectados</td>
-                </tr>
+                <tr><td className="py-8 text-center text-subtle" colSpan={4}>Sin eventos proyectados</td></tr>
               ) : null}
             </tbody>
           </table>
@@ -298,9 +391,7 @@ function CashflowPage() {
                 </tr>
               ))}
               {stats.cats.length === 0 ? (
-                <tr>
-                  <td className="py-8 text-center text-subtle" colSpan={2}>Sin categorías</td>
-                </tr>
+                <tr><td className="py-8 text-center text-subtle" colSpan={2}>Sin categorías</td></tr>
               ) : null}
             </tbody>
           </table>
@@ -365,6 +456,7 @@ function CashflowPage() {
                   currency: recCur,
                   frequency: recFreq,
                   nextDate: recDate || new Date().toISOString().slice(0, 10),
+                  direction: recDirection,
                 },
               });
               toast.success("Flujo mapeado al activo");
@@ -418,14 +510,18 @@ function CashflowPage() {
           <Field label="Frecuencia">
             <Select value={recFreq} onChange={(e) => setRecFreq(e.target.value)}>
               {FREQUENCIES.map((f) => (
-                <option key={f.value} value={f.value}>
-                  {f.label}
-                </option>
+                <option key={f.value} value={f.value}>{f.label}</option>
               ))}
             </Select>
           </Field>
           <Field label="Próxima fecha">
             <Input type="date" value={recDate} onChange={(e) => setRecDate(e.target.value)} />
+          </Field>
+          <Field label="Dirección">
+            <Select value={recDirection} onChange={(e) => setRecDirection(e.target.value as "INCOME" | "EXPENSE")}>
+              <option value="INCOME">Ingreso</option>
+              <option value="EXPENSE">Gasto</option>
+            </Select>
           </Field>
           <div className="flex justify-end">
             <Button type="submit" disabled={pending}>{pending ? "Guardando…" : "Mapear"}</Button>
@@ -468,9 +564,7 @@ function CashflowPage() {
           <Field label="Tipo">
             <Select value={type} onChange={(e) => setType(e.target.value)}>
               {TX_TYPES.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.label}
-                </option>
+                <option key={t.value} value={t.value}>{t.label}</option>
               ))}
             </Select>
           </Field>
