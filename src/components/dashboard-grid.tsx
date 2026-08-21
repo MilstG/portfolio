@@ -2,7 +2,7 @@ import { GripVertical, RotateCcw } from "lucide-react";
 import { useEffect, useState, type DragEvent, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
-const STORAGE_KEY = "pat-dashboard-layout-v2";
+const STORAGE_KEY = "pat-dashboard-layout-v3";
 
 export type PanelId =
   | "allocation"
@@ -11,7 +11,22 @@ export type PanelId =
   | "holdings"
   | "nwSeries"
   | "projIncome"
-  | "pnlByType";
+  | "pnlByType"
+  | "coupons24"
+  | "payCalendar"
+  | "bondYields"
+  | "amorts"
+  | "incomeExpense"
+  | "allocTarget"
+  | "pnlContrib"
+  | "fxExposure"
+  | "drawdown"
+  | "concentration"
+  | "correlation"
+  | "fxScenario"
+  | "rebalance"
+  | "costLadder"
+  | "goals";
 
 export const DEFAULT_LAYOUT: PanelId[] = [
   "allocation",
@@ -21,11 +36,30 @@ export const DEFAULT_LAYOUT: PanelId[] = [
   "nwSeries",
   "projIncome",
   "pnlByType",
+  "coupons24",
+  "payCalendar",
+  "bondYields",
+  "amorts",
+  "incomeExpense",
+  "allocTarget",
+  "pnlContrib",
+  "fxExposure",
+  "drawdown",
+  "concentration",
+  "correlation",
+  "fxScenario",
+  "rebalance",
+  "costLadder",
+  "goals",
 ];
 
-/** Full-width panels */
 const FULL: Partial<Record<PanelId, boolean>> = {
   holdings: true,
+  coupons24: true,
+  payCalendar: true,
+  incomeExpense: true,
+  pnlContrib: true,
+  costLadder: true,
 };
 
 function loadLayout(): PanelId[] {
@@ -48,12 +82,11 @@ function saveLayout(ids: PanelId[]) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(ids));
   } catch {
-    /* ignore quota */
+    /* ignore */
   }
 }
 
-/** Native HTML5 DnD grid. Order persists in localStorage. */
-export function DashboardGrid({ panels }: { panels: Record<PanelId, ReactNode> }) {
+export function DashboardGrid({ panels }: { panels: Partial<Record<PanelId, ReactNode>> }) {
   const [order, setOrder] = useState<PanelId[]>(DEFAULT_LAYOUT);
   const [ready, setReady] = useState(false);
   const [dragId, setDragId] = useState<PanelId | null>(null);
@@ -107,7 +140,7 @@ export function DashboardGrid({ panels }: { panels: Record<PanelId, ReactNode> }
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between px-0.5">
         <p className="font-mono text-[10px] tracking-widest text-muted">
-          DRAG · reordená paneles · se guarda en este browser
+          DRAG · {order.filter((id) => panels[id]).length} paneles · localStorage
         </p>
         <button
           type="button"
@@ -141,7 +174,7 @@ export function DashboardGrid({ panels }: { panels: Record<PanelId, ReactNode> }
             >
               <span
                 className="absolute right-1.5 top-1.5 z-10 cursor-grab text-subtle hover:text-accent active:cursor-grabbing"
-                title="Arrastrar para reordenar"
+                title="Arrastrar"
               >
                 <GripVertical className="size-3.5" />
               </span>
