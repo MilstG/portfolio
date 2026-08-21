@@ -132,6 +132,33 @@ isNull(xirr([]), 'vacio');
   near(row.projectedIncomeUsd, 800, 1e-9, 'proyectado 12m suma solo la ventana');
 }
 
+// ---- ventana de la columna de ingresos ----
+// La columna dice 12M: lo cobrado tiene que ser de 12 meses, no de toda la
+// tenencia, o una fila de 1.4 años no es comparable con una proyeccion a 12m.
+{
+  const { portfolioReturn } = await server.ssrLoadModule('/src/lib/returns.ts');
+  const tx = (id, date, amount) => ({ id, date, description:'Cupón', amount,
+    currency:'USD', type:'COUPON', category:null, assetId:'z1', accountId:null });
+  const p = {
+    assets: [{ id:'z1', name:'ON Z', ticker:'Z', type:'BOND', quantity:10000,
+      costBasis:9000, currentValue:10000, currency:'USD', purchaseDate:'2025-01-10',
+      notes:null, priceId:null, unpriced:false }],
+    accounts:[], recurring:[],
+    transactions:[
+      tx('v1','2025-03-01',300),   // fuera de los 12 meses
+      tx('v2','2025-06-01',300),   // fuera
+      tx('v3','2025-12-01',400),   // dentro
+      tx('v4','2026-06-01',400),   // dentro
+    ],
+    snapshots:[], fx:{official:1,blue:1,mep:1,average:1}, liabilities:[], goals:[],
+    allocTargets:[], fxHistory:[], settings:{pinEnabled:false,hasPin:false},
+    taxLots:[], watchlist:[], lastPriceRun:null,
+  };
+  const row = portfolioReturn(p, '2026-08-21').perAsset[0];
+  near(row.incomeUsd, 1400, 1e-9, 'ingreso total desde la compra');
+  near(row.income12mUsd, 800, 1e-9, 'ingreso de los ultimos 12 meses');
+}
+
 // ---- bondMetrics ----
 const { bondMetrics } = await server.ssrLoadModule('/src/lib/bonds.ts');
 const asset = (id, value) => ({ id, name:id, ticker:id, type:'BOND', quantity:1,

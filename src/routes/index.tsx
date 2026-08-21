@@ -1895,9 +1895,16 @@ function Dashboard() {
                                 los próximos 12 meses, marcado con ~ para no
                                 hacerlo pasar por dinero recibido. */}
                             <td className="hidden py-1 pr-2 text-right tabular-nums sm:table-cell">
-                              {r.incomeUsd > 0 ? (
-                                <span className="text-gain">
-                                  {formatUsd(r.incomeUsd)}
+                              {r.income12mUsd > 0 ? (
+                                <span
+                                  className="text-gain"
+                                  title={
+                                    r.incomeUsd > r.income12mUsd
+                                      ? `Cobrado en 12 meses. Desde la compra: ${formatUsd(r.incomeUsd)}`
+                                      : "Cobrado en los últimos 12 meses"
+                                  }
+                                >
+                                  {formatUsd(r.income12mUsd)}
                                 </span>
                               ) : r.projectedIncomeUsd > 0 ? (
                                 <span

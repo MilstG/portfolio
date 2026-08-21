@@ -77,6 +77,13 @@ const REALISED_INCOME_TYPES = new Set([
   "INCOME",
 ]);
 
+/** ISO date twelve months before `today`. */
+function twelveMonthsBefore(today: string): string {
+  const d = new Date(today + "T12:00:00Z");
+  d.setUTCFullYear(d.getUTCFullYear() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
 function realisedIncome(transactions: Tx[], today: string, fxAvg: number) {
   return transactions.filter(
     (t) => t.date <= today && REALISED_INCOME_TYPES.has(t.type) &&
@@ -91,6 +98,15 @@ export type AssetReturn = {
   costUsd: number;
   valueUsd: number;
   incomeUsd: number;
+  /**
+   * Income collected in the trailing twelve months.
+   *
+   * `incomeUsd` is everything since purchase, which is what the return needs
+   * but not what a column headed "12M" may show: a bond held 1.4 years reported
+   * 1.4 years of coupons beside another showing a 12-month projection, so the
+   * rows were not comparable.
+   */
+  income12mUsd: number;
   /**
    * Scheduled income over the next twelve months.
    *
@@ -120,6 +136,7 @@ export function assetReturns(
   projectedByAsset: Map<string, number> = new Map(),
 ): AssetReturn[] {
   const income = realisedIncome(transactions, today, fxAvg);
+  const cutoff12m = twelveMonthsBefore(today);
   const byAsset = new Map<string, Tx[]>();
   for (const t of income) {
     if (!t.assetId) continue;
@@ -136,6 +153,9 @@ export function assetReturns(
       (sum, t) => sum + toUsd(t.amount, t.currency, fxAvg),
       0,
     );
+    const income12mUsd = rows
+      .filter((t) => t.date >= cutoff12m)
+      .reduce((sum, t) => sum + toUsd(t.amount, t.currency, fxAvg), 0);
 
     let annualised: number | null = null;
     let holdingYears: number | null = null;
@@ -161,6 +181,7 @@ export function assetReturns(
       costUsd,
       valueUsd,
       incomeUsd,
+      income12mUsd,
       projectedIncomeUsd: projectedByAsset.get(a.id) ?? 0,
       annualised,
       holdingYears,
