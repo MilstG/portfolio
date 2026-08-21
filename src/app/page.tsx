@@ -23,8 +23,7 @@ const totalPnl = netWorth.totalUsd - totalCost - 9450;
 const bestAsset = [...assets].sort((a, b) => b.pnlPercent - a.pnlPercent)[0];
 const worstAsset = [...assets].sort((a, b) => a.pnlPercent - b.pnlPercent)[0];
 const realEstateYield = (1200 * 12) / 35000 * 100;
-const bondYield = (275 * 2) / 5125 * 100;
-const monthlyRecurring = 1200 + 275 / 6;
+const monthlyRecurring = 1200;
 
 export default function DashboardPage() {
   return (
@@ -54,7 +53,7 @@ export default function DashboardPage() {
         <div className="rounded-2xl border border-zinc-800 bg-[#12141c] p-5">
           <p className="text-xs font-medium text-zinc-500">Ingreso recurrente / mes</p>
           <p className="mt-1 text-3xl font-bold tracking-tight text-white">{formatUSD(monthlyRecurring)}</p>
-          <p className="mt-2 text-xs text-zinc-500">Alquiler + cupones estimados</p>
+          <p className="mt-2 text-xs text-zinc-500">Alquileres estimados</p>
         </div>
         <div className="rounded-2xl border border-zinc-800 bg-[#12141c] p-5">
           <p className="text-xs font-medium text-zinc-500">Yield Real Estate</p>
@@ -121,9 +120,9 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="rounded-2xl border border-zinc-800 bg-[#12141c] p-5">
-            <p className="text-xs font-medium text-zinc-500">Yield Bono AL30</p>
-            <p className="mt-1 text-2xl font-bold text-amber-400">{bondYield.toFixed(1)}%</p>
-            <p className="mt-1 text-xs text-zinc-500">Anual estimado por cupones</p>
+            <p className="text-xs font-medium text-zinc-500">Cash disponible</p>
+            <p className="mt-1 text-2xl font-bold text-white">$9,450</p>
+            <p className="mt-1 text-xs text-zinc-500">7.6% del patrimonio</p>
           </div>
         </div>
       </div>
