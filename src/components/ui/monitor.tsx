@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { useHints } from "@/components/ui/hints";
+import { Tip } from "@/components/ui/tip";
 import { cn } from "@/lib/utils";
 
 /** Terminal-style panel used across the dashboard and every page. */
@@ -62,6 +63,25 @@ export function Hint() {
     <span className="inline-flex size-4 items-center justify-center border border-line font-mono text-[11px] text-subtle">
       ?
     </span>
+  );
+}
+
+/**
+ * The "?" and its explanation as one unit.
+ *
+ * Wrapping a hidden <Hint /> in a <Tip> left an empty tooltip trigger in the
+ * header whenever hints were off — a hoverable span with nothing in it. This
+ * drops the whole thing instead.
+ */
+export function HelpTip({ content }: { content: ReactNode }) {
+  const { on } = useHints();
+  if (!on || !content) return null;
+  return (
+    <Tip inline content={content}>
+      <span className="inline-flex size-4 items-center justify-center border border-line font-mono text-[11px] text-subtle">
+        ?
+      </span>
+    </Tip>
   );
 }
 

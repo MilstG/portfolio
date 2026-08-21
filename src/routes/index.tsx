@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo } from "react";
 import {
   Area,
@@ -16,10 +16,11 @@ import {
   YAxis,
 } from "recharts";
 import { DashboardGrid } from "@/components/dashboard-grid";
-import { Hint, Monitor, TableWrap } from "@/components/ui/monitor";
+import { HelpTip, Monitor, TableWrap } from "@/components/ui/monitor";
 import { Tip } from "@/components/ui/tip";
 import { Pager, usePager } from "@/components/ui/pager";
 import { RangeSelect, useRange } from "@/components/ui/range";
+import { AssetLink, TipRow } from "@/components/ui/asset-link";
 import { getPortfolio } from "@/lib/server/portfolio";
 import { computeAnalytics } from "@/lib/analytics";
 import { portfolioReturn } from "@/lib/returns";
@@ -99,6 +100,126 @@ function Dashboard() {
   }, [data.snapshots, s.nw]);
 
   const nwRange = useRange(chart, "ALL");
+  /**
+   * Everything known about one position, for the hover tip on any row that
+   * names it. Each table shows three or four columns; this fills in the rest
+   * rather than making the user open the detail page to see a cost basis.
+   */
+  const describeAsset = useMemo(() => {
+    const byId = new Map(data.assets.map((x) => [x.id, x]));
+    const holdingById = new Map(s.holdings.map((h) => [h.id, h]));
+    const returnById = new Map(ret.perAsset.map((r) => [r.id, r]));
+    const bondById = new Map(bonds.map((b) => [b.id, b]));
+    const today = new Date().toISOString().slice(0, 10);
+    const nextByAsset = new Map<string, { date: string; amount: number }>();
+    for (const t of data.transactions) {
+      if (!t.assetId || t.date < today) continue;
+      const cur = nextByAsset.get(t.assetId);
+      if (!cur || t.date < cur.date) {
+        nextByAsset.set(t.assetId, {
+          date: t.date,
+          amount: toUsd(t.amount, t.currency, data.fx.average),
+        });
+      }
+    }
+
+    return (id: string) => {
+      const asset = byId.get(id);
+      if (!asset) return null;
+      const h = holdingById.get(id);
+      const r = returnById.get(id);
+      const bond = bondById.get(id);
+      const next = nextByAsset.get(id);
+      const valueUsd = toUsd(asset.currentValue, asset.currency, data.fx.average);
+      const costUsd = toUsd(asset.costBasis, asset.currency, data.fx.average);
+      const pnl = valueUsd - costUsd;
+
+      return (
+        <div className="min-w-52 space-y-0.5">
+          <p className="mb-1 border-b border-line pb-1 text-accent">
+            {asset.name}
+            {asset.ticker ? (
+              <span className="ml-1 text-subtle">{asset.ticker}</span>
+            ) : null}
+          </p>
+          <TipRow label="TIPO" value={asset.type} tone="muted" />
+          {asset.quantity != null && asset.quantity !== 1 ? (
+            <TipRow
+              label="CANTIDAD"
+              value={asset.quantity.toLocaleString("es-AR")}
+              tone="muted"
+            />
+          ) : null}
+          <TipRow label="COSTO" value={formatUsd(costUsd)} tone="muted" />
+          <TipRow label="VALOR" value={formatUsd(valueUsd)} />
+          <TipRow
+            label="P&L"
+            value={`${formatUsd(pnl)} · ${formatPct(costUsd > 0 ? (pnl / costUsd) * 100 : 0)}`}
+            tone={pnl >= 0 ? "gain" : "loss"}
+          />
+          {h ? (
+            <TipRow
+              label="PESO"
+              value={`${h.weight.toFixed(1)}%`}
+              tone="muted"
+            />
+          ) : null}
+          {asset.currency !== "USD" ? (
+            <TipRow label="MONEDA" value={asset.currency} tone="muted" />
+          ) : null}
+          {asset.purchaseDate ? (
+            <TipRow
+              label="COMPRA"
+              value={
+                asset.purchaseDate +
+                (r?.holdingYears != null
+                  ? ` · ${r.holdingYears.toFixed(1)}a`
+                  : "")
+              }
+              tone="muted"
+            />
+          ) : null}
+          {r?.annualised != null ? (
+            <TipRow
+              label="ANUALIZADO"
+              value={formatPct(r.annualised * 100)}
+              tone={r.annualised >= 0 ? "gain" : "loss"}
+            />
+          ) : null}
+          {r && r.incomeUsd > 0 ? (
+            <TipRow
+              label="COBRADO"
+              value={formatUsd(r.incomeUsd)}
+              tone="gain"
+            />
+          ) : null}
+          {bond?.ytm != null ? (
+            <TipRow label="YTM" value={formatPct(bond.ytm * 100)} />
+          ) : null}
+          {bond?.modified != null ? (
+            <TipRow
+              label="DURATION"
+              value={`${bond.modified.toFixed(1)}a`}
+              tone="muted"
+            />
+          ) : null}
+          {next ? (
+            <TipRow
+              label="PRÓX. PAGO"
+              value={`${next.date} · ${formatUsd(next.amount)}`}
+              tone="gain"
+            />
+          ) : null}
+          {asset.notes ? (
+            <p className="mt-1 border-t border-line pt-1 text-subtle">
+              {asset.notes}
+            </p>
+          ) : null}
+        </div>
+      );
+    };
+  }, [data.assets, data.transactions, data.fx.average, s.holdings, ret.perAsset, bonds]);
+
   const holdingsPager = usePager(s.holdings, 10);
   const couponsPager = usePager(a.coupons, 10);
   const amortsPager = usePager(a.amorts, 10);
@@ -123,12 +244,7 @@ function Dashboard() {
           emphasis="primary"
           className="col-span-2"
           action={
-            <Tip
-              inline
-              content="Activos + cash − liabilities, valuado al FX promedio (oficial+blue+MEP)/3."
-            >
-              <Hint />
-            </Tip>
+            <HelpTip content="Activos + cash − liabilities, valuado al FX promedio (oficial+blue+MEP)/3." />
           }
         >
           <Tip
@@ -160,12 +276,7 @@ function Dashboard() {
         <Monitor
           title="P&L"
           action={
-            <Tip
-              inline
-              content="Ganancia/pérdida no realizada = valor de mercado − cost basis de todos los activos."
-            >
-              <Hint />
-            </Tip>
+            <HelpTip content="Ganancia/pérdida no realizada = valor de mercado − cost basis de todos los activos." />
           }
         >
           <Tip
@@ -185,12 +296,7 @@ function Dashboard() {
         <Monitor
           title="INCOME YIELD"
           action={
-            <Tip
-              inline
-              content="Ingreso recurrente anualizado ÷ net worth. Incluye cupones, alquileres y dividendos mapeados."
-            >
-              <Hint />
-            </Tip>
+            <HelpTip content="Ingreso recurrente anualizado ÷ net worth. Incluye cupones, alquileres y dividendos mapeados." />
           }
         >
           <Tip
@@ -200,20 +306,18 @@ function Dashboard() {
               {s.yieldPct ? `${s.yieldPct.toFixed(1)}%` : "—"}
             </p>
           </Tip>
-          <p className="font-mono text-[11px] text-muted">
+          <Link
+            to="/cashflow"
+            className="block font-mono text-[11px] text-muted underline decoration-line decoration-dotted underline-offset-[3px] hover:text-accent hover:decoration-accent hover:decoration-solid"
+          >
             {formatUsd(s.monthly)}/mo · {formatUsd(s.annualIncome)}/yr
-          </p>
+          </Link>
         </Monitor>
 
         <Monitor
           title="RE YIELD"
           action={
-            <Tip
-              inline
-              content="Yield bruto de real estate: alquileres anuales ÷ valor de propiedades."
-            >
-              <Hint />
-            </Tip>
+            <HelpTip content="Yield bruto de real estate: alquileres anuales ÷ valor de propiedades." />
           }
         >
           <p className="font-mono text-xl tabular-nums text-accent">
@@ -225,12 +329,7 @@ function Dashboard() {
         <Monitor
           title="CONCENTRATION"
           action={
-            <Tip
-              inline
-              content="Peso del holding más grande sobre el net worth. >30% se marca en rojo."
-            >
-              <Hint />
-            </Tip>
+            <HelpTip content="Peso del holding más grande sobre el net worth. >30% se marca en rojo." />
           }
         >
           <Tip
@@ -247,19 +346,24 @@ function Dashboard() {
             </p>
           </Tip>
           <p className="truncate font-mono text-[11px] text-muted">
-            top · {s.holdings[0]?.name ?? "—"}
+            top ·{" "}
+            {s.holdings[0] ? (
+              <AssetLink
+                id={s.holdings[0].id}
+                name={s.holdings[0].name}
+                tip={describeAsset(s.holdings[0].id)}
+                className="text-muted"
+              />
+            ) : (
+              "—"
+            )}
           </p>
         </Monitor>
 
         <Monitor
           title="LIQUID / CASH"
           action={
-            <Tip
-              inline
-              content="% líquido ≈ cash + crypto + stocks. Excluye real estate e ilíquidos."
-            >
-              <Hint />
-            </Tip>
+            <HelpTip content="% líquido ≈ cash + crypto + stocks. Excluye real estate e ilíquidos." />
           }
         >
           <Tip
@@ -269,20 +373,18 @@ function Dashboard() {
               {s.liq.liquidPct.toFixed(0)}%
             </p>
           </Tip>
-          <p className="font-mono text-[11px] text-muted">
+          <Link
+            to="/cash"
+            className="block font-mono text-[11px] text-muted underline decoration-line decoration-dotted underline-offset-[3px] hover:text-accent hover:decoration-accent hover:decoration-solid"
+          >
             cash {formatUsd(s.cashUsd)} · {s.cashPct.toFixed(0)}% NW
-          </p>
+          </Link>
         </Monitor>
 
         <Monitor
           title="DEBT"
           action={
-            <Tip
-              inline
-              content="Deudas / liabilities cargadas en Settings. Ya están restadas del net worth."
-            >
-              <Hint />
-            </Tip>
+            <HelpTip content="Deudas / liabilities cargadas en Settings. Ya están restadas del net worth." />
           }
         >
           <p
@@ -290,13 +392,16 @@ function Dashboard() {
           >
             {debtUsd > 0 ? formatUsd(debtUsd) : "—"}
           </p>
-          <p className="font-mono text-[11px] text-muted">
+          <Link
+            to="/settings"
+            className="block font-mono text-[11px] text-muted underline decoration-line decoration-dotted underline-offset-[3px] hover:text-accent hover:decoration-accent hover:decoration-solid"
+          >
             {data.liabilities.length}{" "}
             {data.liabilities.length === 1 ? "pasivo" : "pasivos"}
             {s.nw > 0 && debtUsd > 0
               ? ` · ${((debtUsd / (s.nw + debtUsd)) * 100).toFixed(0)}% LTV`
               : ""}
-          </p>
+          </Link>
         </Monitor>
       </div>
 
@@ -308,12 +413,7 @@ function Dashboard() {
               title="ALLOCATION"
               emphasis="primary"
               action={
-                <Tip
-                  inline
-                  content="Distribución del patrimonio por asset class. Hover una fila o el donut para detalle."
-                >
-                  <Hint />
-                </Tip>
+                <HelpTip content="Distribución del patrimonio por asset class. Hover una fila o el donut para detalle." />
               }
             >
               <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
@@ -408,12 +508,7 @@ function Dashboard() {
               title="INCOME WINDOW"
               emphasis="primary"
               action={
-                <Tip
-                  inline
-                  content="Ingresos proyectados desde flujos recurrentes y cupones en los próximos 30/90 días."
-                >
-                  <Hint />
-                </Tip>
+                <HelpTip content="Ingresos proyectados desde flujos recurrentes y cupones en los próximos 30/90 días." />
               }
             >
               <div className="flex min-h-40 flex-col gap-2">
@@ -436,10 +531,19 @@ function Dashboard() {
                       key={i}
                       className="flex justify-between font-mono text-[11px]"
                     >
-                      <span className="truncate text-subtle">
-                        {e.date.slice(5)} · {e.name}
-                      </span>
-                      <span className="text-gain">
+                      {e.assetId && describeAsset(e.assetId) ? (
+                        <AssetLink
+                          id={e.assetId}
+                          name={`${e.date.slice(5)} · ${e.name}`}
+                          tip={describeAsset(e.assetId)}
+                          className="text-subtle"
+                        />
+                      ) : (
+                        <span className="truncate text-subtle">
+                          {e.date.slice(5)} · {e.name}
+                        </span>
+                      )}
+                      <span className="shrink-0 text-gain">
                         {formatUsd(e.amountUsd)}
                       </span>
                     </div>
@@ -458,12 +562,7 @@ function Dashboard() {
             <Monitor
               title="INSIGHTS"
               action={
-                <Tip
-                  inline
-                  content="Alertas automáticas: concentración, yield, gaps de allocation y eventos próximos."
-                >
-                  <Hint />
-                </Tip>
+                <HelpTip content="Alertas automáticas: concentración, yield, gaps de allocation y eventos próximos." />
               }
             >
               <ul className="flex h-40 flex-col gap-1.5 overflow-auto">
@@ -484,12 +583,7 @@ function Dashboard() {
               title="HOLDINGS RANK"
               emphasis="primary"
               action={
-                <Tip
-                  inline
-                  content="Activos ordenados por valor. P&L vs cost basis. WGT = peso sobre el net worth."
-                >
-                  <Hint />
-                </Tip>
+                <HelpTip content="Activos ordenados por valor. P&L vs cost basis. WGT = peso sobre el net worth." />
               }
             >
               <TableWrap>
@@ -510,16 +604,17 @@ function Dashboard() {
                       <tr
                         key={h.id}
                         className="border-b border-line/50 hover:bg-raised/40"
-                        title={`${h.name}${h.ticker ? ` (${h.ticker})` : ""} · ${h.type} | ${formatUsd(h.valueUsd)} | P&L ${formatUsd(h.pnlUsd)} | ${h.weight.toFixed(2)}%`}
                       >
                         <td className="py-1 pr-2 text-subtle">
                           {holdingsPager.from + i}
                         </td>
                         <td className="py-1 pr-2">
-                          <span className="text-fg">{h.name}</span>
-                          {h.ticker ? (
-                            <span className="ml-1 text-subtle">{h.ticker}</span>
-                          ) : null}
+                          <AssetLink
+                            id={h.id}
+                            name={h.name}
+                            ticker={h.ticker}
+                            tip={describeAsset(h.id)}
+                          />
                         </td>
                         <td className="py-1 pr-2 text-muted">{h.type}</td>
                         <td className="py-1 pr-2 text-right tabular-nums">
@@ -564,12 +659,7 @@ function Dashboard() {
                     value={nwRange.range}
                     onChange={nwRange.setRange}
                   />
-                  <Tip
-                    inline
-                    content="Histórico de net worth desde snapshots diarios. El punto de hoy es el NW live. Cargá historial viejo en CFG → HISTORIAL DE NET WORTH."
-                  >
-                    <Hint />
-                  </Tip>
+                  <HelpTip content="Histórico de net worth desde snapshots diarios. El punto de hoy es el NW live. Cargá historial viejo en CFG → HISTORIAL DE NET WORTH." />
                 </div>
               }
             >
@@ -619,12 +709,7 @@ function Dashboard() {
             <Monitor
               title="PROJ INCOME 12M"
               action={
-                <Tip
-                  inline
-                  content="Barras apiladas por tipo de ingreso (cupón, alquiler, dividendo, amortización)."
-                >
-                  <Hint />
-                </Tip>
+                <HelpTip content="Barras apiladas por tipo de ingreso (cupón, alquiler, dividendo, amortización)." />
               }
             >
               <div className="flex h-40 flex-col">
@@ -693,12 +778,7 @@ function Dashboard() {
             <Monitor
               title="P&L BY TYPE"
               action={
-                <Tip
-                  inline
-                  content="P&L no realizado agrupado por asset class vs su cost basis."
-                >
-                  <Hint />
-                </Tip>
+                <HelpTip content="P&L no realizado agrupado por asset class vs su cost basis." />
               }
             >
               <div className="flex h-36 flex-col justify-center gap-2">
@@ -735,12 +815,7 @@ function Dashboard() {
             <Monitor
               title="COUPONS 12M"
               action={
-                <Tip
-                  inline
-                  content="Cupones proyectados próximos 12 meses, agrupados por bono/ticker. TOTAL = suma USD; NEXT = próxima fecha."
-                >
-                  <Hint />
-                </Tip>
+                <HelpTip content="Cupones proyectados próximos 12 meses, agrupados por bono/ticker. TOTAL = suma USD; NEXT = próxima fecha." />
               }
             >
               <TableWrap>
@@ -800,12 +875,7 @@ function Dashboard() {
             <Monitor
               title="PAY CALENDAR 24M"
               action={
-                <Tip
-                  inline
-                  content="Calendario de pagos proyectados (cupones + alquileres + amort) mes a mes a 24 meses."
-                >
-                  <Hint />
-                </Tip>
+                <HelpTip content="Calendario de pagos proyectados (cupones + alquileres + amort) mes a mes a 24 meses." />
               }
             >
               <div className="h-40">
@@ -852,12 +922,7 @@ function Dashboard() {
             <Monitor
               title="BOND YIELDS"
               action={
-                <Tip
-                  inline
-                  content="CUR = cupones de los próximos 12m sobre el valor actual. YTM = TIR de pagar hoy el precio y cobrar todo el schedule (actual/365, sin intereses corridos). DUR = duración modificada: variación aproximada de precio por cada punto de yield."
-                >
-                  <Hint />
-                </Tip>
+                <HelpTip content="CUR = cupones de los próximos 12m sobre el valor actual. YTM = TIR de pagar hoy el precio y cobrar todo el schedule (actual/365, sin intereses corridos). DUR = duración modificada: variación aproximada de precio por cada punto de yield." />
               }
             >
               <TableWrap>
@@ -878,7 +943,13 @@ function Dashboard() {
                         key={b.id}
                         className="border-b border-line/50 hover:bg-raised/40"
                       >
-                        <td className="py-1 pr-2 truncate text-fg">{b.name}</td>
+                        <td className="py-1 pr-2">
+                          <AssetLink
+                            id={b.id}
+                            name={b.name}
+                            tip={describeAsset(b.id)}
+                          />
+                        </td>
                         <td className="py-1 pr-2 text-right tabular-nums">
                           {formatUsd(b.priceUsd)}
                         </td>
@@ -935,12 +1006,7 @@ function Dashboard() {
             <Monitor
               title="AMORTIZATIONS"
               action={
-                <Tip
-                  inline
-                  content="Amortizaciones de capital proyectadas (tipo AMORT / principal) desde el schedule."
-                >
-                  <Hint />
-                </Tip>
+                <HelpTip content="Amortizaciones de capital proyectadas (tipo AMORT / principal) desde el schedule." />
               }
             >
               <TableWrap>
@@ -992,12 +1058,7 @@ function Dashboard() {
             <Monitor
               title="INCOME / EXPENSE 12M"
               action={
-                <Tip
-                  inline
-                  content="Flujos reales del ledger (transactions) últimos 12 meses: income vs expense vs net."
-                >
-                  <Hint />
-                </Tip>
+                <HelpTip content="Flujos reales del ledger (transactions) últimos 12 meses: income vs expense vs net." />
               }
             >
               <div className="h-40">
@@ -1052,12 +1113,7 @@ function Dashboard() {
             <Monitor
               title="ALLOC vs TARGET"
               action={
-                <Tip
-                  inline
-                  content="Comparación allocation real vs targets configurados. GAP positivo = overweight."
-                >
-                  <Hint />
-                </Tip>
+                <HelpTip content="Comparación allocation real vs targets configurados. GAP positivo = overweight." />
               }
             >
               <div className="flex h-40 flex-col gap-1.5 overflow-auto">
@@ -1106,12 +1162,7 @@ function Dashboard() {
             <Monitor
               title="P&L CONTRIBUTION"
               action={
-                <Tip
-                  inline
-                  content="Contribución individual al P&L no realizado. Ordenado de mayor ganancia a mayor pérdida."
-                >
-                  <Hint />
-                </Tip>
+                <HelpTip content="Contribución individual al P&L no realizado. Ordenado de mayor ganancia a mayor pérdida." />
               }
             >
               <TableWrap>
@@ -1134,7 +1185,13 @@ function Dashboard() {
                         <td className="py-1 pr-2 text-subtle">
                           {pnlContribPager.from + i}
                         </td>
-                        <td className="py-1 pr-2 truncate text-fg">{r.name}</td>
+                        <td className="py-1 pr-2">
+                          <AssetLink
+                            id={r.id}
+                            name={r.name}
+                            tip={describeAsset(r.id)}
+                          />
+                        </td>
                         <td className="py-1 pr-2 text-muted">{r.type}</td>
                         <td
                           className={`py-1 pr-2 text-right tabular-nums ${r.pnl >= 0 ? "text-gain" : "text-loss"}`}
@@ -1167,12 +1224,7 @@ function Dashboard() {
             <Monitor
               title="FX EXPOSURE"
               action={
-                <Tip
-                  inline
-                  content="Exposición por moneda (assets + cash) convertida al FX promedio."
-                >
-                  <Hint />
-                </Tip>
+                <HelpTip content="Exposición por moneda (assets + cash) convertida al FX promedio." />
               }
             >
               <div className="flex h-36 flex-col justify-center gap-2">
@@ -1211,11 +1263,7 @@ function Dashboard() {
             <Monitor
               title="DRAWDOWN"
               action={
-                <Tip
-                  content={`Peak ${formatUsd(a.drawdown.peak)} · trough ${formatUsd(a.drawdown.trough)} · max DD ${a.drawdown.drawdownPct.toFixed(1)}%`}
-                >
-                  <Hint />
-                </Tip>
+                <HelpTip content={`Peak ${formatUsd(a.drawdown.peak)} · trough ${formatUsd(a.drawdown.trough)} · max DD ${a.drawdown.drawdownPct.toFixed(1)}%`} />
               }
             >
               <div className="flex h-36 flex-col">
@@ -1271,12 +1319,7 @@ function Dashboard() {
             <Monitor
               title="HHI / CONCENTRATION"
               action={
-                <Tip
-                  inline
-                  content="HHI = suma de pesos² (0–10000). >2500 = concentrado. Top3/Top5 = peso acumulado."
-                >
-                  <Hint />
-                </Tip>
+                <HelpTip content="HHI = suma de pesos² (0–10000). >2500 = concentrado. Top3/Top5 = peso acumulado." />
               }
             >
               <div className="flex h-36 flex-col justify-between">
@@ -1310,7 +1353,12 @@ function Dashboard() {
                       key={h.id}
                       className="flex justify-between font-mono text-[11px]"
                     >
-                      <span className="truncate text-subtle">{h.name}</span>
+                      <AssetLink
+                        id={h.id}
+                        name={h.name}
+                        tip={describeAsset(h.id)}
+                        className="text-subtle"
+                      />
                       <span className="tabular-nums text-fg">
                         {h.weight.toFixed(1)}%
                       </span>
@@ -1325,12 +1373,7 @@ function Dashboard() {
             <Monitor
               title="CLASS MIX"
               action={
-                <Tip
-                  inline
-                  content="Conteo de posiciones por asset class (proxy de diversificación, no correlación real)."
-                >
-                  <Hint />
-                </Tip>
+                <HelpTip content="Conteo de posiciones por asset class (proxy de diversificación, no correlación real)." />
               }
             >
               <div className="flex h-36 flex-col justify-center gap-2">
@@ -1367,11 +1410,7 @@ function Dashboard() {
             <Monitor
               title="FX STRESS"
               action={
-                <Tip
-                  content={`NW base ${formatUsd(a.fxScenario.base)}. Escenarios revalúan solo balances ARS ±% sobre el FX promedio.`}
-                >
-                  <Hint />
-                </Tip>
+                <HelpTip content={`NW base ${formatUsd(a.fxScenario.base)}. Escenarios revalúan solo balances ARS ±% sobre el FX promedio.`} />
               }
             >
               <div className="h-40">
@@ -1414,12 +1453,7 @@ function Dashboard() {
             <Monitor
               title="REBALANCE"
               action={
-                <Tip
-                  inline
-                  content="Sugerencias cuando el gap vs target es ≥2 puntos porcentuales."
-                >
-                  <Hint />
-                </Tip>
+                <HelpTip content="Sugerencias cuando el gap vs target es ≥2 puntos porcentuales." />
               }
             >
               <div className="flex h-36 flex-col gap-1.5 overflow-auto">
@@ -1455,12 +1489,7 @@ function Dashboard() {
             <Monitor
               title="COST LADDER"
               action={
-                <Tip
-                  inline
-                  content="Ratio valor/cost ordenado ascendente. <1.0 = underwater. Útil para tax-lot / harvest."
-                >
-                  <Hint />
-                </Tip>
+                <HelpTip content="Ratio valor/cost ordenado ascendente. <1.0 = underwater. Útil para tax-lot / harvest." />
               }
             >
               <TableWrap>
@@ -1483,7 +1512,13 @@ function Dashboard() {
                         <td className="py-1 pr-2 text-subtle">
                           {costLadderPager.from + i}
                         </td>
-                        <td className="py-1 pr-2 truncate text-fg">{r.name}</td>
+                        <td className="py-1 pr-2">
+                          <AssetLink
+                            id={r.id}
+                            name={r.name}
+                            tip={describeAsset(r.id)}
+                          />
+                        </td>
                         <td className="py-1 pr-2 text-right tabular-nums text-muted">
                           {formatUsd(r.cost)}
                         </td>
@@ -1517,12 +1552,7 @@ function Dashboard() {
               title="RETORNO ANUAL"
               emphasis="primary"
               action={
-                <Tip
-                  inline
-                  content="Retorno money-weighted (XIRR, actual/365). Cada posición aporta su costo como egreso en la fecha de compra, los ingresos ya cobrados como entradas, y el valor actual como saldo final."
-                >
-                  <Hint />
-                </Tip>
+                <HelpTip content="Retorno money-weighted (XIRR, actual/365). Cada posición aporta su costo como egreso en la fecha de compra, los ingresos ya cobrados como entradas, y el valor actual como saldo final." />
               }
             >
               {ret.annualised === null ? (
@@ -1572,8 +1602,12 @@ function Dashboard() {
                             key={r.id}
                             className="border-b border-line/50 hover:bg-raised/40"
                           >
-                            <td className="py-1 pr-2 text-fg">
-                              <span className="truncate">{r.name}</span>
+                            <td className="py-1 pr-2">
+                              <AssetLink
+                                id={r.id}
+                                name={r.name}
+                                tip={describeAsset(r.id)}
+                              />
                             </td>
                             <td className="py-1 pr-2 text-right tabular-nums text-muted">
                               {r.holdingYears === null
@@ -1620,12 +1654,7 @@ function Dashboard() {
             <Monitor
               title="NW vs DÓLAR"
               action={
-                <Tip
-                  inline
-                  content="Patrimonio y tipo de cambio rebasados a 100 al inicio de la ventana. El libro ya está valuado en USD, así que esto responde si creció más rápido de lo que se movió la moneda. fx_history suma una fila por cada día que actualizás el FX."
-                >
-                  <Hint />
-                </Tip>
+                <HelpTip content="Patrimonio y tipo de cambio rebasados a 100 al inicio de la ventana. El libro ya está valuado en USD, así que esto responde si creció más rápido de lo que se movió la moneda. fx_history suma una fila por cada día que actualizás el FX." />
               }
             >
               {bench === null ? (
@@ -1707,12 +1736,7 @@ function Dashboard() {
             <Monitor
               title="GOALS"
               action={
-                <Tip
-                  inline
-                  content="Progreso hacia goals medido contra el net worth actual."
-                >
-                  <Hint />
-                </Tip>
+                <HelpTip content="Progreso hacia goals medido contra el net worth actual." />
               }
             >
               <div className="flex h-36 flex-col gap-2 overflow-auto">
