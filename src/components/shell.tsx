@@ -7,7 +7,7 @@ const nav = [
   { to: "/assets", label: "POS", key: "F2" },
   { to: "/cash", label: "CASH", key: "F3" },
   { to: "/cashflow", label: "FLUJO", key: "F4" },
-  { to: "/settings", label: "FX", key: "F5" },
+  { to: "/settings", label: "CFG", key: "F5" },
 ] as const;
 
 export function Shell({ children }: { children: ReactNode }) {
