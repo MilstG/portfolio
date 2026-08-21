@@ -5,6 +5,8 @@ import {
   Bar,
   BarChart,
   Cell,
+  Line,
+  LineChart,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -17,6 +19,7 @@ import { Monitor } from "@/components/ui/monitor";
 import { Tip } from "@/components/ui/tip";
 import { Pager, usePager } from "@/components/ui/pager";
 import { getPortfolio } from "@/lib/server/portfolio";
+import { computeAnalytics } from "@/lib/analytics";
 import {
   computeDashboard,
   INCOME_KIND_META,
@@ -34,6 +37,7 @@ const COLORS = ["#ff6d00", "#22c55e", "#3b82f6", "#a855f7", "#eab308", "#ef4444"
 function Dashboard() {
   const data = Route.useLoaderData();
   const s = computeDashboard(data);
+  const a = computeAnalytics(data);
   const today = new Date().toISOString().slice(0, 10);
   const snapPts = data.snapshots.map((x) => ({
     date: x.date,
@@ -51,7 +55,13 @@ function Dashboard() {
     if (last) last.value = s.nw;
   }
   const chart = snapPts;
+
   const holdingsPager = usePager(s.holdings, 10);
+  const couponsPager = usePager(a.coupons, 10);
+  const amortsPager = usePager(a.amorts, 10);
+  const bondYieldsPager = usePager(a.bondYields, 10);
+  const pnlContribPager = usePager(a.pnlContrib, 10);
+  const costLadderPager = usePager(a.costLadder, 10);
 
   return (
     <div className="flex flex-col gap-2">
@@ -175,7 +185,7 @@ function Dashboard() {
         </Monitor>
       </div>
 
-      {/* Paneles reordenables */}
+      {/* Paneles reordenables — 22 total */}
       <DashboardGrid
         panels={{
           allocation: (
@@ -230,23 +240,23 @@ function Dashboard() {
                   </div>
                 </div>
                 <div className="min-w-0 flex-1 space-y-1">
-                  {s.alloc.map((a, i) => {
-                    const pct = (a.value / s.allocTotal) * 100;
+                  {s.alloc.map((row, i) => {
+                    const pct = (row.value / s.allocTotal) * 100;
                     return (
                       <Tip
-                        key={a.key}
+                        key={row.key}
                         side="left"
                         content={
                           <div className="space-y-0.5">
-                            <p className="text-accent">{a.name}</p>
-                            <p>{formatUsd(a.value)}</p>
+                            <p className="text-accent">{row.name}</p>
+                            <p>{formatUsd(row.value)}</p>
                             <p className="text-subtle">{pct.toFixed(2)}% del patrimonio</p>
                           </div>
                         }
                       >
                         <div className="group flex w-full items-center gap-2 font-mono text-[11px] hover:bg-raised/60">
                           <span className="h-2.5 w-2.5 shrink-0" style={{ background: COLORS[i % COLORS.length] }} />
-                          <span className="w-12 shrink-0 text-muted">{a.name}</span>
+                          <span className="w-12 shrink-0 text-muted">{row.name}</span>
                           <div className="h-1.5 min-w-0 flex-1 bg-line">
                             <div
                               className="h-1.5"
@@ -254,7 +264,7 @@ function Dashboard() {
                             />
                           </div>
                           <span className="w-[4.5rem] shrink-0 text-right tabular-nums text-fg">
-                            {formatUsd(a.value)}
+                            {formatUsd(row.value)}
                           </span>
                           <span className="w-9 shrink-0 text-right tabular-nums text-subtle">{pct.toFixed(0)}%</span>
                         </div>
@@ -522,6 +532,665 @@ function Dashboard() {
                 {s.byType.length === 0 ? (
                   <p className="font-mono text-xs text-muted">sin assets</p>
                 ) : null}
+              </div>
+            </Monitor>
+          ),
+
+          coupons24: (
+            <Monitor
+              title="COUPONS 12M"
+              action={
+                <Tip content="Cupones proyectados próximos 12 meses, agrupados por bono/ticker. TOTAL = suma USD; NEXT = próxima fecha.">
+                  <span className="font-mono text-[9px] text-subtle">?</span>
+                </Tip>
+              }
+            >
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[480px] border-collapse font-mono text-[11px]">
+                  <thead>
+                    <tr className="border-b border-line text-left text-[10px] text-muted">
+                      <th className="py-1 pr-2">#</th>
+                      <th className="py-1 pr-2">NAME</th>
+                      <th className="py-1 pr-2 text-right">TOTAL</th>
+                      <th className="py-1 pr-2 text-right">N</th>
+                      <th className="py-1 text-right">NEXT</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {couponsPager.slice.map((c, i) => (
+                      <tr key={c.name + i} className="border-b border-line/50 hover:bg-raised/40">
+                        <td className="py-1 pr-2 text-subtle">{couponsPager.from + i}</td>
+                        <td className="py-1 pr-2 truncate text-fg">{c.name}</td>
+                        <td className="py-1 pr-2 text-right tabular-nums text-gain">{formatUsd(c.total)}</td>
+                        <td className="py-1 pr-2 text-right tabular-nums text-muted">{c.count}</td>
+                        <td className="py-1 text-right tabular-nums text-subtle">{c.next.slice(5)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {a.coupons.length === 0 ? (
+                  <p className="font-mono text-xs text-muted">sin cupones proyectados</p>
+                ) : (
+                  <Pager
+                    page={couponsPager.page}
+                    totalPages={couponsPager.totalPages}
+                    total={couponsPager.total}
+                    from={couponsPager.from}
+                    to={couponsPager.to}
+                    onChange={couponsPager.setPage}
+                    className="mt-1"
+                  />
+                )}
+              </div>
+            </Monitor>
+          ),
+
+          payCalendar: (
+            <Monitor
+              title="PAY CALENDAR 24M"
+              action={
+                <Tip content="Calendario de pagos proyectados (cupones + alquileres + amort) mes a mes a 24 meses.">
+                  <span className="font-mono text-[9px] text-subtle">?</span>
+                </Tip>
+              }
+            >
+              <div className="h-40">
+                {a.calendar.some((c) => c.total > 0) ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={a.calendar} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                      <XAxis
+                        dataKey="label"
+                        tick={{ fill: "#6b7280", fontSize: 9, fontFamily: "IBM Plex Mono" }}
+                        axisLine={false}
+                        tickLine={false}
+                        interval={2}
+                      />
+                      <YAxis hide />
+                      <Tooltip
+                        contentStyle={{
+                          background: "#000",
+                          border: "1px solid #ff6d00",
+                          borderRadius: 0,
+                          fontSize: 11,
+                          fontFamily: "IBM Plex Mono",
+                        }}
+                        formatter={(v: number, _n: string, p: { payload?: { count?: number } }) => [
+                          `${formatUsd(v)} · ${p?.payload?.count ?? 0} pagos`,
+                          "Total",
+                        ]}
+                      />
+                      <Bar dataKey="total" fill="#ff6d00" fillOpacity={0.85} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <p className="font-mono text-xs text-muted">sin calendario</p>
+                )}
+              </div>
+            </Monitor>
+          ),
+
+          bondYields: (
+            <Monitor
+              title="BOND YIELDS"
+              action={
+                <Tip content="Yield estimado por bono = cupones 12m ÷ valor de mercado actual.">
+                  <span className="font-mono text-[9px] text-subtle">?</span>
+                </Tip>
+              }
+            >
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[420px] border-collapse font-mono text-[11px]">
+                  <thead>
+                    <tr className="border-b border-line text-left text-[10px] text-muted">
+                      <th className="py-1 pr-2">BOND</th>
+                      <th className="py-1 pr-2 text-right">VALUE</th>
+                      <th className="py-1 pr-2 text-right">INCOME/YR</th>
+                      <th className="py-1 text-right">YLD</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bondYieldsPager.slice.map((b) => (
+                      <tr key={b.id} className="border-b border-line/50 hover:bg-raised/40">
+                        <td className="py-1 pr-2 truncate text-fg">{b.name}</td>
+                        <td className="py-1 pr-2 text-right tabular-nums">{formatUsd(b.value)}</td>
+                        <td className="py-1 pr-2 text-right tabular-nums text-gain">{formatUsd(b.yearlyIncome)}</td>
+                        <td className="py-1 text-right tabular-nums text-accent">{b.yieldPct.toFixed(1)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {a.bondYields.length === 0 ? (
+                  <p className="font-mono text-xs text-muted">sin bonos</p>
+                ) : (
+                  <Pager
+                    page={bondYieldsPager.page}
+                    totalPages={bondYieldsPager.totalPages}
+                    total={bondYieldsPager.total}
+                    from={bondYieldsPager.from}
+                    to={bondYieldsPager.to}
+                    onChange={bondYieldsPager.setPage}
+                    className="mt-1"
+                  />
+                )}
+              </div>
+            </Monitor>
+          ),
+
+          amorts: (
+            <Monitor
+              title="AMORTIZATIONS"
+              action={
+                <Tip content="Amortizaciones de capital proyectadas (tipo AMORT / principal) desde el schedule.">
+                  <span className="font-mono text-[9px] text-subtle">?</span>
+                </Tip>
+              }
+            >
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[400px] border-collapse font-mono text-[11px]">
+                  <thead>
+                    <tr className="border-b border-line text-left text-[10px] text-muted">
+                      <th className="py-1 pr-2">DATE</th>
+                      <th className="py-1 pr-2">NAME</th>
+                      <th className="py-1 text-right">AMOUNT</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {amortsPager.slice.map((e, i) => (
+                      <tr key={e.date + e.name + i} className="border-b border-line/50 hover:bg-raised/40">
+                        <td className="py-1 pr-2 tabular-nums text-subtle">{e.date.slice(5)}</td>
+                        <td className="py-1 pr-2 truncate text-fg">{e.name}</td>
+                        <td className="py-1 text-right tabular-nums text-gain">{formatUsd(e.amountUsd)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {a.amorts.length === 0 ? (
+                  <p className="font-mono text-xs text-muted">sin amortizaciones</p>
+                ) : (
+                  <Pager
+                    page={amortsPager.page}
+                    totalPages={amortsPager.totalPages}
+                    total={amortsPager.total}
+                    from={amortsPager.from}
+                    to={amortsPager.to}
+                    onChange={amortsPager.setPage}
+                    className="mt-1"
+                  />
+                )}
+              </div>
+            </Monitor>
+          ),
+
+          incomeExpense: (
+            <Monitor
+              title="INCOME / EXPENSE 12M"
+              action={
+                <Tip content="Flujos reales del ledger (transactions) últimos 12 meses: income vs expense vs net.">
+                  <span className="font-mono text-[9px] text-subtle">?</span>
+                </Tip>
+              }
+            >
+              <div className="h-40">
+                {a.incomeExpense.some((m) => m.income > 0 || m.expense > 0) ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={a.incomeExpense} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                      <XAxis
+                        dataKey="label"
+                        tick={{ fill: "#6b7280", fontSize: 10, fontFamily: "IBM Plex Mono" }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <YAxis hide />
+                      <Tooltip
+                        contentStyle={{
+                          background: "#000",
+                          border: "1px solid #ff6d00",
+                          borderRadius: 0,
+                          fontSize: 11,
+                          fontFamily: "IBM Plex Mono",
+                        }}
+                        formatter={(v: number, name: string) => [formatUsd(v), name]}
+                      />
+                      <Bar dataKey="income" fill="#22c55e" fillOpacity={0.9} name="Income" />
+                      <Bar dataKey="expense" fill="#ef4444" fillOpacity={0.9} name="Expense" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <p className="font-mono text-xs text-muted">sin movimientos en ledger</p>
+                )}
+              </div>
+            </Monitor>
+          ),
+
+          allocTarget: (
+            <Monitor
+              title="ALLOC vs TARGET"
+              action={
+                <Tip content="Comparación allocation real vs targets configurados. GAP positivo = overweight.">
+                  <span className="font-mono text-[9px] text-subtle">?</span>
+                </Tip>
+              }
+            >
+              <div className="flex h-40 flex-col gap-1.5 overflow-auto">
+                {a.allocTarget.length === 0 ? (
+                  <p className="font-mono text-xs text-muted">sin targets — configurá en Settings</p>
+                ) : (
+                  a.allocTarget.map((r) => (
+                    <Tip
+                      key={r.type}
+                      content={`${r.type}: actual ${r.actualPct.toFixed(1)}% · target ${r.targetPct.toFixed(1)}% · ${formatUsd(r.actualUsd)}`}
+                    >
+                      <div className="flex items-center gap-2 font-mono text-[11px]">
+                        <span className="w-16 shrink-0 truncate text-muted">{r.type.slice(0, 8)}</span>
+                        <div className="relative h-2 flex-1 bg-line">
+                          <div
+                            className="absolute inset-y-0 left-0 bg-accent/40"
+                            style={{ width: `${Math.min(100, r.actualPct)}%` }}
+                          />
+                          {r.targetPct > 0 ? (
+                            <div
+                              className="absolute inset-y-0 w-0.5 bg-fg"
+                              style={{ left: `${Math.min(100, r.targetPct)}%` }}
+                            />
+                          ) : null}
+                        </div>
+                        <span
+                          className={`w-12 shrink-0 text-right tabular-nums ${
+                            Math.abs(r.gap) >= 5 ? "text-loss" : "text-subtle"
+                          }`}
+                        >
+                          {r.gap >= 0 ? "+" : ""}
+                          {r.gap.toFixed(0)}%
+                        </span>
+                      </div>
+                    </Tip>
+                  ))
+                )}
+              </div>
+            </Monitor>
+          ),
+
+          pnlContrib: (
+            <Monitor
+              title="P&L CONTRIBUTION"
+              action={
+                <Tip content="Contribución individual al P&L no realizado. Ordenado de mayor ganancia a mayor pérdida.">
+                  <span className="font-mono text-[9px] text-subtle">?</span>
+                </Tip>
+              }
+            >
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[480px] border-collapse font-mono text-[11px]">
+                  <thead>
+                    <tr className="border-b border-line text-left text-[10px] text-muted">
+                      <th className="py-1 pr-2">#</th>
+                      <th className="py-1 pr-2">NAME</th>
+                      <th className="py-1 pr-2">TYPE</th>
+                      <th className="py-1 pr-2 text-right">P&L</th>
+                      <th className="py-1 text-right">%</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pnlContribPager.slice.map((r, i) => (
+                      <tr key={r.id} className="border-b border-line/50 hover:bg-raised/40">
+                        <td className="py-1 pr-2 text-subtle">{pnlContribPager.from + i}</td>
+                        <td className="py-1 pr-2 truncate text-fg">{r.name}</td>
+                        <td className="py-1 pr-2 text-muted">{r.type}</td>
+                        <td className={`py-1 pr-2 text-right tabular-nums ${r.pnl >= 0 ? "text-gain" : "text-loss"}`}>
+                          {formatUsd(r.pnl)}
+                        </td>
+                        <td className={`py-1 text-right tabular-nums ${r.pnlPct >= 0 ? "text-gain" : "text-loss"}`}>
+                          {formatPct(r.pnlPct)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <Pager
+                  page={pnlContribPager.page}
+                  totalPages={pnlContribPager.totalPages}
+                  total={pnlContribPager.total}
+                  from={pnlContribPager.from}
+                  to={pnlContribPager.to}
+                  onChange={pnlContribPager.setPage}
+                  className="mt-1"
+                />
+              </div>
+            </Monitor>
+          ),
+
+          fxExposure: (
+            <Monitor
+              title="FX EXPOSURE"
+              action={
+                <Tip content="Exposición por moneda (assets + cash) convertida al FX promedio.">
+                  <span className="font-mono text-[9px] text-subtle">?</span>
+                </Tip>
+              }
+            >
+              <div className="flex h-36 flex-col justify-center gap-2">
+                {a.fxExposure.map((c, i) => (
+                  <Tip key={c.code} content={`${c.code}: ${formatUsd(c.valueUsd)} · ${c.weight.toFixed(1)}% del libro`}>
+                    <div className="flex items-center gap-2 font-mono text-[11px]">
+                      <span className="w-10 text-muted">{c.code}</span>
+                      <div className="h-2 flex-1 bg-line">
+                        <div
+                          className="h-2"
+                          style={{
+                            width: `${Math.min(100, c.weight)}%`,
+                            background: COLORS[i % COLORS.length],
+                          }}
+                        />
+                      </div>
+                      <span className="w-14 text-right tabular-nums text-fg">{c.weight.toFixed(0)}%</span>
+                      <span className="w-[4.5rem] text-right tabular-nums text-subtle">{formatUsd(c.valueUsd)}</span>
+                    </div>
+                  </Tip>
+                ))}
+                {a.fxExposure.length === 0 ? (
+                  <p className="font-mono text-xs text-muted">sin data</p>
+                ) : null}
+              </div>
+            </Monitor>
+          ),
+
+          drawdown: (
+            <Monitor
+              title="DRAWDOWN"
+              action={
+                <Tip content={`Peak ${formatUsd(a.drawdown.peak)} · trough ${formatUsd(a.drawdown.trough)} · max DD ${a.drawdown.drawdownPct.toFixed(1)}%`}>
+                  <span className="font-mono text-[9px] text-subtle">?</span>
+                </Tip>
+              }
+            >
+              <div className="flex h-36 flex-col">
+                <div className="mb-1 flex gap-3 font-mono text-[10px]">
+                  <span className="text-muted">
+                    MAX DD <span className="text-loss">{a.drawdown.drawdownPct.toFixed(1)}%</span>
+                  </span>
+                  <span className="text-muted">
+                    PEAK <span className="text-fg">{formatUsd(a.drawdown.peak)}</span>
+                  </span>
+                </div>
+                <div className="min-h-0 flex-1">
+                  {a.drawdown.series.length >= 1 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={a.drawdown.series} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                        <XAxis dataKey="date" hide />
+                        <YAxis hide domain={["dataMin - 1", 0]} />
+                        <Tooltip
+                          contentStyle={{
+                            background: "#000",
+                            border: "1px solid #ff6d00",
+                            borderRadius: 0,
+                            fontSize: 11,
+                            fontFamily: "IBM Plex Mono",
+                          }}
+                          formatter={(v: number) => [`${v.toFixed(2)}%`, "DD"]}
+                          labelFormatter={(l) => String(l)}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="dd"
+                          stroke="#ef4444"
+                          strokeWidth={1.25}
+                          fill="#ef4444"
+                          fillOpacity={0.15}
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <p className="font-mono text-xs text-muted">pocos snapshots</p>
+                  )}
+                </div>
+              </div>
+            </Monitor>
+          ),
+
+          concentration: (
+            <Monitor
+              title="HHI / CONCENTRATION"
+              action={
+                <Tip content="HHI = suma de pesos² (0–10000). >2500 = concentrado. Top3/Top5 = peso acumulado.">
+                  <span className="font-mono text-[9px] text-subtle">?</span>
+                </Tip>
+              }
+            >
+              <div className="flex h-36 flex-col justify-between">
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <p className="font-mono text-[10px] text-muted">HHI</p>
+                    <p
+                      className={`font-mono text-xl tabular-nums ${
+                        a.concentration.hhi >= 2500 ? "text-loss" : "text-fg"
+                      }`}
+                    >
+                      {a.concentration.hhi.toFixed(0)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="font-mono text-[10px] text-muted">TOP 3</p>
+                    <p className="font-mono text-xl tabular-nums text-accent">
+                      {a.concentration.top3.toFixed(0)}%
+                    </p>
+                  </div>
+                  <div>
+                    <p className="font-mono text-[10px] text-muted">TOP 5</p>
+                    <p className="font-mono text-xl tabular-nums text-fg">
+                      {a.concentration.top5.toFixed(0)}%
+                    </p>
+                  </div>
+                </div>
+                <div className="border-t border-line pt-2">
+                  {a.concentration.holdings.slice(0, 4).map((h) => (
+                    <div key={h.id} className="flex justify-between font-mono text-[10px]">
+                      <span className="truncate text-subtle">{h.name}</span>
+                      <span className="tabular-nums text-fg">{h.weight.toFixed(1)}%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </Monitor>
+          ),
+
+          correlation: (
+            <Monitor
+              title="CLASS MIX"
+              action={
+                <Tip content="Conteo de posiciones por asset class (proxy de diversificación, no correlación real).">
+                  <span className="font-mono text-[9px] text-subtle">?</span>
+                </Tip>
+              }
+            >
+              <div className="flex h-36 flex-col justify-center gap-2">
+                {a.classes.map((c, i) => (
+                  <div key={c.type} className="flex items-center gap-2 font-mono text-[11px]">
+                    <span className="w-20 shrink-0 truncate text-muted">{c.type}</span>
+                    <div className="h-2 flex-1 bg-line">
+                      <div
+                        className="h-2"
+                        style={{
+                          width: `${Math.min(100, c.count * 12)}%`,
+                          background: COLORS[i % COLORS.length],
+                        }}
+                      />
+                    </div>
+                    <span className="w-8 text-right tabular-nums text-fg">{c.count}</span>
+                  </div>
+                ))}
+                {a.classes.length === 0 ? (
+                  <p className="font-mono text-xs text-muted">sin assets</p>
+                ) : null}
+              </div>
+            </Monitor>
+          ),
+
+          fxScenario: (
+            <Monitor
+              title="FX STRESS"
+              action={
+                <Tip content={`NW base ${formatUsd(a.fxScenario.base)}. Escenarios revalúan solo balances ARS ±% sobre el FX promedio.`}>
+                  <span className="font-mono text-[9px] text-subtle">?</span>
+                </Tip>
+              }
+            >
+              <div className="h-40">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={a.fxScenario.scenarios} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                    <XAxis
+                      dataKey="pct"
+                      tick={{ fill: "#6b7280", fontSize: 10, fontFamily: "IBM Plex Mono" }}
+                      axisLine={false}
+                      tickLine={false}
+                      tickFormatter={(v) => `${v}%`}
+                    />
+                    <YAxis hide domain={["dataMin - 2000", "dataMax + 2000"]} />
+                    <Tooltip
+                      contentStyle={{
+                        background: "#000",
+                        border: "1px solid #ff6d00",
+                        borderRadius: 0,
+                        fontSize: 11,
+                        fontFamily: "IBM Plex Mono",
+                      }}
+                      formatter={(v: number) => [formatUsd(v), "NW"]}
+                      labelFormatter={(l) => `FX ${l}%`}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="nw"
+                      stroke="#ff6d00"
+                      strokeWidth={1.5}
+                      dot={{ r: 2, fill: "#ff6d00" }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </Monitor>
+          ),
+
+          rebalance: (
+            <Monitor
+              title="REBALANCE"
+              action={
+                <Tip content="Sugerencias cuando el gap vs target es ≥2 puntos porcentuales.">
+                  <span className="font-mono text-[9px] text-subtle">?</span>
+                </Tip>
+              }
+            >
+              <div className="flex h-36 flex-col gap-1.5 overflow-auto">
+                {a.rebalance.length === 0 ? (
+                  <p className="font-mono text-xs text-muted">
+                    {data.allocTargets.length === 0
+                      ? "sin targets configurados"
+                      : "dentro de banda (±2%)"}
+                  </p>
+                ) : (
+                  a.rebalance.map((r) => (
+                    <div
+                      key={r.type}
+                      className="flex items-center justify-between gap-2 border-b border-line/40 py-0.5 font-mono text-[11px]"
+                    >
+                      <span className="truncate text-fg">{r.type}</span>
+                      <span
+                        className={`shrink-0 ${r.action === "REDUCIR" ? "text-loss" : "text-gain"}`}
+                      >
+                        {r.action}
+                      </span>
+                      <span className="shrink-0 tabular-nums text-subtle">
+                        {r.actualPct.toFixed(0)}% → {r.targetPct.toFixed(0)}%
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </Monitor>
+          ),
+
+          costLadder: (
+            <Monitor
+              title="COST LADDER"
+              action={
+                <Tip content="Ratio valor/cost ordenado ascendente. <1.0 = underwater. Útil para tax-lot / harvest.">
+                  <span className="font-mono text-[9px] text-subtle">?</span>
+                </Tip>
+              }
+            >
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[480px] border-collapse font-mono text-[11px]">
+                  <thead>
+                    <tr className="border-b border-line text-left text-[10px] text-muted">
+                      <th className="py-1 pr-2">#</th>
+                      <th className="py-1 pr-2">NAME</th>
+                      <th className="py-1 pr-2 text-right">COST</th>
+                      <th className="py-1 pr-2 text-right">VALUE</th>
+                      <th className="py-1 text-right">RATIO</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {costLadderPager.slice.map((r, i) => (
+                      <tr key={r.id} className="border-b border-line/50 hover:bg-raised/40">
+                        <td className="py-1 pr-2 text-subtle">{costLadderPager.from + i}</td>
+                        <td className="py-1 pr-2 truncate text-fg">{r.name}</td>
+                        <td className="py-1 pr-2 text-right tabular-nums text-muted">{formatUsd(r.cost)}</td>
+                        <td className="py-1 pr-2 text-right tabular-nums">{formatUsd(r.value)}</td>
+                        <td
+                          className={`py-1 text-right tabular-nums ${
+                            r.ratio < 1 ? "text-loss" : "text-gain"
+                          }`}
+                        >
+                          {r.ratio.toFixed(2)}x
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <Pager
+                  page={costLadderPager.page}
+                  totalPages={costLadderPager.totalPages}
+                  total={costLadderPager.total}
+                  from={costLadderPager.from}
+                  to={costLadderPager.to}
+                  onChange={costLadderPager.setPage}
+                  className="mt-1"
+                />
+              </div>
+            </Monitor>
+          ),
+
+          goals: (
+            <Monitor
+              title="GOALS"
+              action={
+                <Tip content="Progreso hacia goals medido contra el net worth actual.">
+                  <span className="font-mono text-[9px] text-subtle">?</span>
+                </Tip>
+              }
+            >
+              <div className="flex h-36 flex-col gap-2 overflow-auto">
+                {a.goals.length === 0 ? (
+                  <p className="font-mono text-xs text-muted">sin goals — agregá en Settings</p>
+                ) : (
+                  a.goals.map((g) => (
+                    <Tip
+                      key={g.id}
+                      content={`${g.name}: ${formatUsd(s.nw)} / ${formatUsd(g.targetUsd)} · faltan ${formatUsd(g.remaining)}${g.targetDate ? ` · target ${g.targetDate}` : ""}`}
+                    >
+                      <div className="space-y-1">
+                        <div className="flex justify-between font-mono text-[11px]">
+                          <span className="truncate text-fg">{g.name}</span>
+                          <span className="tabular-nums text-accent">{g.progressPct.toFixed(0)}%</span>
+                        </div>
+                        <div className="h-1.5 bg-line">
+                          <div
+                            className="h-1.5 bg-accent"
+                            style={{ width: `${Math.min(100, g.progressPct)}%` }}
+                          />
+                        </div>
+                      </div>
+                    </Tip>
+                  ))
+                )}
               </div>
             </Monitor>
           ),
