@@ -1,22 +1,5 @@
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from "@dnd-kit/core";
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-  rectSortingStrategy,
-} from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 import { GripVertical, RotateCcw } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type DragEvent, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 const STORAGE_KEY = "pat-dashboard-layout-v1";
@@ -104,62 +87,42 @@ function saveLayout(ids: PanelId[]) {
   }
 }
 
-function SortablePanel({
-  id,
-  children,
-  className,
-}: {
-  id: PanelId;
-  children: ReactNode;
-  className?: string;
-}) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id });
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  };
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className={cn("relative", isDragging && "z-20 opacity-90 ring-1 ring-accent", className)}
-    >
-      <button
-        type="button"
-        className="absolute right-1 top-1 z-10 inline-flex h-5 w-5 items-center justify-center text-subtle hover:text-accent"
-        aria-label="Arrastrar panel"
-        {...attributes}
-        {...listeners}
-      >
-        <GripVertical className="size-3.5" />
-      </button>
-      {children}
-    </div>
-  );
-}
-
 export function DashboardGrid({ panels }: { panels: Record<PanelId, ReactNode> }) {
   const [order, setOrder] = useState<PanelId[]>(DEFAULT_LAYOUT);
   const [ready, setReady] = useState(false);
+  const [dragId, setDragId] = useState<PanelId | null>(null);
+  const [overId, setOverId] = useState<PanelId | null>(null);
 
   useEffect(() => {
     setOrder(loadLayout());
     setReady(true);
   }, []);
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
+  function onDragStart(e: DragEvent, id: PanelId) {
+    setDragId(id);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", id);
+  }
 
-  function onDragEnd(event: DragEndEvent) {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
+  function onDragOver(e: DragEvent, id: PanelId) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (id !== overId) setOverId(id);
+  }
+
+  function onDrop(e: DragEvent, target: PanelId) {
+    e.preventDefault();
+    const source = (e.dataTransfer.getData("text/plain") || dragId) as PanelId;
+    setDragId(null);
+    setOverId(null);
+    if (!source || source === target) return;
     setOrder((items) => {
-      const oldIndex = items.indexOf(active.id as PanelId);
-      const newIndex = items.indexOf(over.id as PanelId);
-      const next = arrayMove(items, oldIndex, newIndex);
+      const next = [...items];
+      const from = next.indexOf(source);
+      const to = next.indexOf(target);
+      if (from < 0 || to < 0) return items;
+      next.splice(from, 1);
+      next.splice(to, 0, source);
       saveLayout(next);
       return next;
     });
@@ -188,21 +151,36 @@ export function DashboardGrid({ panels }: { panels: Record<PanelId, ReactNode> }
           <RotateCcw className="size-3" /> RESET LAYOUT
         </button>
       </div>
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-        <SortableContext items={order} strategy={rectSortingStrategy}>
-          <div className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-3">
-            {order.map((id) => {
-              const node = panels[id];
-              if (!node) return null;
-              return (
-                <SortablePanel key={id} id={id} className={PANEL_SPAN[id]}>
-                  {node}
-                </SortablePanel>
-              );
-            })}
-          </div>
-        </SortableContext>
-      </DndContext>
+      <div className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-3">
+        {order.map((id) => {
+          const node = panels[id];
+          if (!node) return null;
+          return (
+            <div
+              key={id}
+              draggable
+              onDragStart={(e) => onDragStart(e, id)}
+              onDragOver={(e) => onDragOver(e, id)}
+              onDrop={(e) => onDrop(e, id)}
+              onDragEnd={() => {
+                setDragId(null);
+                setOverId(null);
+              }}
+              className={cn(
+                "relative",
+                PANEL_SPAN[id],
+                dragId === id && "opacity-60",
+                overId === id && dragId && dragId !== id && "ring-1 ring-accent",
+              )}
+            >
+              <span className="absolute right-1 top-1 z-10 cursor-grab text-subtle active:cursor-grabbing">
+                <GripVertical className="size-3.5" />
+              </span>
+              {node}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
