@@ -611,6 +611,8 @@ export const verifyPin = createServerFn({ method: "POST" })
     return { ok: hash === String(row.pin_hash) };
   });
 
+/* ─── Goals ─────────────────────────────────────────────────────────────── */
+
 const goalInput = z.object({
   id: z.string().optional(),
   name: z.string().min(1),
@@ -637,7 +639,7 @@ export const upsertGoal = createServerFn({ method: "POST" })
         data.name.trim(),
         data.targetUsd,
         data.targetDate || null,
-        data.notes?.trim() || null,
+        data.notes || null,
       ],
     );
     return { id };
@@ -651,53 +653,30 @@ export const deleteGoal = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-const allocInput = z.object({
+/* ─── Alloc targets ─────────────────────────────────────────────────────── */
+
+const allocTargetInput = z.object({
   assetType: z.string().min(1),
   targetPct: z.number().min(0).max(100),
 });
 
 export const upsertAllocTarget = createServerFn({ method: "POST" })
-  .validator(allocInput)
+  .validator(allocTargetInput)
   .handler(async ({ data }) => {
     const sql = await getSql();
     await sql.query(
       `insert into alloc_targets (asset_type, target_pct)
-       values ($1, $2)
+       values ($1,$2)
        on conflict (asset_type) do update set target_pct = excluded.target_pct`,
-      [data.assetType.trim().toUpperCase(), data.targetPct],
+      [data.assetType, data.targetPct],
     );
     return { ok: true };
   });
 
 export const deleteAllocTarget = createServerFn({ method: "POST" })
-  .validator(z.object({ assetType: z.string().min(1) }))
+  .validator(z.object({ assetType: z.string() }))
   .handler(async ({ data }) => {
     const sql = await getSql();
     await sql`delete from alloc_targets where asset_type = ${data.assetType}`;
-    return { ok: true };
-  });
-
-/** Replace all alloc targets in one shot (sum should ideally be ~100). */
-export const saveAllocTargets = createServerFn({ method: "POST" })
-  .validator(
-    z.object({
-      targets: z.array(
-        z.object({
-          assetType: z.string().min(1),
-          targetPct: z.number().min(0).max(100),
-        }),
-      ),
-    }),
-  )
-  .handler(async ({ data }) => {
-    const sql = await getSql();
-    for (const t of data.targets) {
-      await sql.query(
-        `insert into alloc_targets (asset_type, target_pct)
-         values ($1, $2)
-         on conflict (asset_type) do update set target_pct = excluded.target_pct`,
-        [t.assetType.trim().toUpperCase(), t.targetPct],
-      );
-    }
     return { ok: true };
   });
