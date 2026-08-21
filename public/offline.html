@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>PAT · sin conexión</title>
+    <style>
+      /* Standalone on purpose: the app's stylesheet may not be cached yet, and
+         this page has to render on a cold start with no network. */
+      :root { color-scheme: dark; }
+      html, body {
+        margin: 0;
+        min-height: 100dvh;
+        background: #000;
+        color: #f2f2f2;
+        font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 13px;
+      }
+      main {
+        display: flex;
+        min-height: 100dvh;
+        flex-direction: column;
+        justify-content: center;
+        padding: 24px;
+        max-width: 460px;
+        margin: 0 auto;
+      }
+      .bar {
+        /* align-self, because the flex column would otherwise stretch an
+           inline-block to the full width of the container. */
+        align-self: flex-start;
+        display: inline-block;
+        background: #ff6d00;
+        color: #000;
+        padding: 2px 8px;
+        font-weight: 600;
+        letter-spacing: .18em;
+      }
+      h1 {
+        font-size: 15px;
+        letter-spacing: .16em;
+        text-transform: uppercase;
+        color: #ff6d00;
+        margin: 20px 0 10px;
+      }
+      p { color: #9aa0a6; line-height: 1.6; margin: 0 0 10px; }
+      button {
+        margin-top: 14px;
+        background: #ff6d00;
+        color: #000;
+        border: 0;
+        padding: 9px 14px;
+        font: inherit;
+        letter-spacing: .1em;
+        text-transform: uppercase;
+        cursor: pointer;
+      }
+      button:hover { background: #ff8124; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <span class="bar">PAT</span>
+      <h1>Sin conexión</h1>
+      <p>
+        No se pudo alcanzar el servidor y todavía no hay una copia guardada de
+        esta página.
+      </p>
+      <p>
+        Las páginas que ya visitaste con conexión sí quedan disponibles, con los
+        números de la última carga.
+      </p>
+      <button type="button" onclick="location.reload()">Reintentar</button>
+    </main>
+  </body>
+</html>

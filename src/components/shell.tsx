@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/command-palette";
 import { useHints } from "@/components/ui/hints";
 import { logout } from "@/lib/server/auth";
+import { purgeOfflineCache } from "@/lib/pwa";
 import { cn } from "@/lib/utils";
 
 const nav = [
@@ -149,6 +150,8 @@ export function Shell({
               className="inline-flex size-6 items-center justify-center text-muted hover:text-accent"
               onClick={async () => {
                 await logout();
+                // The cached dashboard belongs to that session.
+                await purgeOfflineCache();
                 window.location.assign("/login");
               }}
             >

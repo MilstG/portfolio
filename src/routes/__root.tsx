@@ -7,6 +7,7 @@ import {
 } from "@tanstack/react-router";
 import { Toaster } from "sonner";
 import { HintsProvider } from "@/components/ui/hints";
+import { registerServiceWorker } from "@/lib/pwa";
 import { Shell } from "@/components/shell";
 import { TipProvider } from "@/components/ui/tip";
 import { getAuthState } from "@/lib/server/auth";
@@ -67,6 +68,10 @@ export const Route = createRootRoute({
   }),
   component: RootComponent,
 });
+
+// Registered once at module scope: the root component can re-render, and
+// registration is idempotent but pointless to repeat.
+registerServiceWorker();
 
 function RootComponent() {
   const { auth, priceStatus } = Route.useRouteContext();

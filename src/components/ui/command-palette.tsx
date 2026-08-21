@@ -15,6 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useHints } from "@/components/ui/hints";
 import { logout } from "@/lib/server/auth";
+import { purgeOfflineCache } from "@/lib/pwa";
 import { refreshPrices, snapshotNow } from "@/lib/server/portfolio";
 import { cn } from "@/lib/utils";
 
@@ -121,6 +122,8 @@ export function CommandPalette({ pinEnabled }: { pinEnabled: boolean }) {
         icon: LockKeyhole,
         run: async () => {
           await logout();
+                // The cached dashboard belongs to that session.
+                await purgeOfflineCache();
           window.location.assign("/login");
         },
       });
