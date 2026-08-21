@@ -2,12 +2,19 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import {
   ArrowLeftRight,
   Briefcase,
+  HelpCircle,
   LayoutDashboard,
   LogOut,
+  Search,
   Settings,
   Wallet,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
+import {
+  CommandPalette,
+  openCommandPalette,
+} from "@/components/ui/command-palette";
+import { useHints } from "@/components/ui/hints";
 import { logout } from "@/lib/server/auth";
 import { cn } from "@/lib/utils";
 
@@ -50,6 +57,7 @@ export function Shell({
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const clock = useClock();
+  const hints = useHints();
   const isActive = (to: string) =>
     to === "/" ? pathname === "/" : pathname.startsWith(to);
 
@@ -64,13 +72,36 @@ export function Shell({
             PATRIMONIO
           </span>
         </Link>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <span
-            className="font-mono text-[12px] tabular-nums text-muted"
+            className="hidden font-mono text-[12px] tabular-nums text-muted sm:inline"
             suppressHydrationWarning
           >
             {clock}
           </span>
+          <button
+            type="button"
+            aria-label="Comandos"
+            title="Comandos (Ctrl/Cmd+K)"
+            className="inline-flex h-6 items-center gap-1.5 border border-border px-2 font-mono text-[11px] text-muted hover:border-accent hover:text-accent"
+            onClick={openCommandPalette}
+          >
+            <Search className="size-3" />
+            <span className="hidden tracking-widest sm:inline">⌘K</span>
+          </button>
+          <button
+            type="button"
+            aria-label={hints.on ? "Ocultar ayudas" : "Mostrar ayudas"}
+            aria-pressed={hints.on}
+            title={hints.on ? "Ocultar ayudas" : "Mostrar ayudas"}
+            className={cn(
+              "inline-flex size-6 items-center justify-center",
+              hints.on ? "text-accent" : "text-muted hover:text-accent",
+            )}
+            onClick={hints.toggle}
+          >
+            <HelpCircle className="size-3.5" />
+          </button>
           {pinEnabled ? (
             <button
               type="button"
@@ -126,6 +157,8 @@ export function Shell({
         <span className="text-accent">LIVE</span>
         <span>USD BOOK</span>
       </footer>
+
+      <CommandPalette pinEnabled={pinEnabled} />
 
       {/* Mobile: bottom tab bar (the only nav below md) */}
       <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-accent bg-bg pb-[env(safe-area-inset-bottom)] md:hidden">

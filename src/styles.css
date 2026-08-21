@@ -13,16 +13,37 @@
   --color-subtle: #6b7280;
   --color-border: #2a2a2a;
   --color-line: #3a3a3a;
+  /* Interactive / brand. Reserved: never a chart series, never a data bar. */
   --color-accent: #ff6d00;
   --color-accent-fg: #000000;
+  --color-ring: #ff6d00;
+
+  /* P&L only. If it is green or red it is a gain or a loss, nothing else. */
   --color-gain: #00e676;
   --color-loss: #ff5252;
-  --color-ring: #ff6d00;
-  --color-crypto: #ffab40;
-  --color-stock: #40c4ff;
-  --color-bond: #ffd54f;
-  --color-real: #69f0ae;
-  --color-cash: #b0bec5;
+
+  /* Categorical ramp for charts and asset classes. Deliberately excludes the
+     accent orange and the P&L green/red so a colour never means two things. */
+  --color-cat-1: #4aa3ff;
+  --color-cat-2: #a78bfa;
+  --color-cat-3: #f5d565;
+  --color-cat-4: #2dd4bf;
+  --color-cat-5: #f472b6;
+  --color-cat-6: #94a3b8;
+
+  --color-crypto: #f5d565;
+  --color-stock: #4aa3ff;
+  --color-bond: #2dd4bf;
+  --color-real: #a78bfa;
+  --color-cash: #94a3b8;
+
+  /* Type scale. The old UI was 11-12px everywhere, so nothing had rank.
+     Four steps: data / body / section / display. */
+  --text-micro: 10px;
+  --text-data: 12px;
+  --text-body: 13px;
+  --text-section: 15px;
+  --text-display: 30px;
 
   --radius-sm: 0px;
   --radius-md: 0px;

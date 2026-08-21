@@ -6,6 +6,7 @@ import {
   Scripts,
 } from "@tanstack/react-router";
 import { Toaster } from "sonner";
+import { HintsProvider } from "@/components/ui/hints";
 import { Shell } from "@/components/shell";
 import { TipProvider } from "@/components/ui/tip";
 import { getAuthState } from "@/lib/server/auth";
@@ -71,6 +72,7 @@ function RootComponent() {
         <HeadContent />
       </head>
       <body className="bg-bg text-fg">
+        <HintsProvider>
         <TipProvider>
           {auth.authenticated ? (
             <Shell pinEnabled={auth.pinEnabled}>
@@ -93,6 +95,7 @@ function RootComponent() {
             }}
           />
         </TipProvider>
+        </HintsProvider>
         <Scripts />
       </body>
     </html>

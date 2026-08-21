@@ -33,13 +33,16 @@ export const Route = createFileRoute("/")({
   component: Dashboard,
 });
 
+/** Mirrors --color-cat-* in styles.css: deliberately excludes the accent
+ *  orange (interactive) and the P&L green/red (gain/loss) so that a colour in
+ *  a chart never carries a second meaning. */
 const COLORS = [
-  "#ff6d00",
-  "#22c55e",
-  "#3b82f6",
-  "#a855f7",
-  "#eab308",
-  "#ef4444",
+  "#4aa3ff",
+  "#a78bfa",
+  "#f5d565",
+  "#2dd4bf",
+  "#f472b6",
+  "#94a3b8",
 ];
 
 const CHART_TIP = {
@@ -95,6 +98,7 @@ function Dashboard() {
       <div className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-8">
         <Monitor
           title="NET WORTH USD"
+          emphasis="primary"
           className="col-span-2"
           action={
             <Tip
@@ -280,6 +284,7 @@ function Dashboard() {
           allocation: (
             <Monitor
               title="ALLOCATION"
+              emphasis="primary"
               action={
                 <Tip
                   inline
@@ -379,6 +384,7 @@ function Dashboard() {
           incomeWindow: (
             <Monitor
               title="INCOME WINDOW"
+              emphasis="primary"
               action={
                 <Tip
                   inline
@@ -454,6 +460,7 @@ function Dashboard() {
           holdings: (
             <Monitor
               title="HOLDINGS RANK"
+              emphasis="primary"
               action={
                 <Tip
                   inline
@@ -566,9 +573,9 @@ function Dashboard() {
                       <Area
                         type="stepAfter"
                         dataKey="value"
-                        stroke="#ff6d00"
+                        stroke="#4aa3ff"
                         strokeWidth={1.25}
-                        fill="#ff6d00"
+                        fill="#4aa3ff"
                         fillOpacity={0.12}
                       />
                     </AreaChart>
@@ -803,7 +810,7 @@ function Dashboard() {
                           "Total",
                         ]}
                       />
-                      <Bar dataKey="total" fill="#ff6d00" fillOpacity={0.85} />
+                      <Bar dataKey="total" fill="#4aa3ff" fillOpacity={0.85} />
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
@@ -1018,7 +1025,7 @@ function Dashboard() {
                       </span>
                       <div className="relative h-2 flex-1 bg-line">
                         <div
-                          className="absolute inset-y-0 left-0 bg-accent/40"
+                          className="absolute inset-y-0 left-0 bg-cat-1/50"
                           style={{ width: `${Math.min(100, r.actualPct)}%` }}
                         />
                         {r.targetPct > 0 ? (
@@ -1341,9 +1348,9 @@ function Dashboard() {
                     <Line
                       type="monotone"
                       dataKey="nw"
-                      stroke="#ff6d00"
+                      stroke="#4aa3ff"
                       strokeWidth={1.5}
-                      dot={{ r: 2, fill: "#ff6d00" }}
+                      dot={{ r: 2, fill: "#4aa3ff" }}
                     />
                   </LineChart>
                 </ResponsiveContainer>

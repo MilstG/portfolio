@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useHints } from "@/components/ui/hints";
 import { cn } from "@/lib/utils";
 
 /** Terminal-style panel used across the dashboard and every page. */
@@ -8,22 +9,40 @@ export function Monitor({
   className,
   bodyClassName,
   action,
+  emphasis = "default",
 }: {
   title: string;
   children: ReactNode;
   className?: string;
   bodyClassName?: string;
   action?: ReactNode;
+  /** "primary" panels carry the headline numbers and are given more weight so
+   *  the grid reads as a hierarchy instead of twenty-two equal boxes. */
+  emphasis?: "primary" | "default";
 }) {
+  const primary = emphasis === "primary";
   return (
     <section
       className={cn(
-        "flex min-w-0 flex-col border border-border bg-surface",
+        "flex min-w-0 flex-col border bg-surface",
+        primary ? "border-line" : "border-border",
         className,
       )}
     >
-      <header className="flex h-7 shrink-0 items-center justify-between gap-2 border-b border-border px-2">
-        <h2 className="min-w-0 truncate font-mono text-[12px] tracking-[0.16em] whitespace-nowrap text-accent">
+      <header
+        className={cn(
+          "flex h-7 shrink-0 items-center justify-between gap-2 border-b px-2",
+          primary ? "border-line bg-raised/60" : "border-border",
+        )}
+      >
+        <h2
+          className={cn(
+            "min-w-0 truncate font-mono tracking-[0.16em] whitespace-nowrap",
+            primary
+              ? "text-[13px] font-medium text-accent"
+              : "text-[12px] text-muted",
+          )}
+        >
           {title}
         </h2>
         {action ? (
@@ -37,6 +56,8 @@ export function Monitor({
 
 /** Small "?" trigger for a Tip inside a Monitor header. */
 export function Hint() {
+  const { on } = useHints();
+  if (!on) return null;
   return (
     <span className="inline-flex size-4 items-center justify-center border border-line font-mono text-[11px] text-subtle">
       ?
