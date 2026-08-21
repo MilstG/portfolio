@@ -4,6 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { AssetForm } from "@/components/asset-form";
 import { ConfirmDelete } from "@/components/confirm-delete";
+import { Pager, usePager } from "@/components/pager";
 import { Button } from "@/components/ui/button";
 import { deleteAsset, getPortfolio, upsertAsset } from "@/lib/server/portfolio";
 import type { Asset } from "@/lib/types";
@@ -25,6 +26,7 @@ export default function AssetsPage() {
   const list =
     filter === "ALL" ? data.assets : data.assets.filter((a) => a.type === filter);
   const total = list.reduce((s, a) => s + toUsd(a.currentValue, a.currency, data.fx.average), 0);
+  const pager = usePager(list, 10);
 
   async function refresh() {
     await router.invalidate();
@@ -51,7 +53,9 @@ export default function AssetsPage() {
             onClick={() => setFilter(f.value)}
             className={cn(
               "h-7 border border-border px-2 font-mono text-[10px] tracking-wide",
-              filter === f.value ? "border-accent bg-accent text-accent-fg" : "bg-surface text-muted hover:text-fg",
+              filter === f.value
+                ? "border-accent bg-accent text-accent-fg"
+                : "bg-surface text-muted hover:text-fg",
             )}
           >
             {f.label.toUpperCase()}
@@ -62,35 +66,55 @@ export default function AssetsPage() {
       <div className="overflow-hidden border border-border bg-surface">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[640px] text-left font-mono text-xs">
-            <thead className="border-b border-border bg-raised text-[10px] tracking-widest text-accent">
+            <thead className="border-b border-border text-[10px] tracking-widest text-muted">
               <tr>
-                <th className="px-2 py-1.5 font-medium">TICKER</th>
-                <th className="px-2 py-1.5 font-medium">TYPE</th>
-                <th className="px-2 py-1.5 text-right font-medium">LAST</th>
-                <th className="px-2 py-1.5 text-right font-medium">COST</th>
-                <th className="px-2 py-1.5 text-right font-medium">PNL</th>
-                <th className="px-2 py-1.5 text-right font-medium"> </th>
+                <th className="px-2 py-1.5">NAME</th>
+                <th className="px-2 py-1.5">TYPE</th>
+                <th className="px-2 py-1.5 text-right">QTY</th>
+                <th className="px-2 py-1.5 text-right">VALUE</th>
+                <th className="px-2 py-1.5 text-right">COST</th>
+                <th className="px-2 py-1.5 text-right">P&L%</th>
+                <th className="px-2 py-1.5 text-right"> </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-border">
-              {list.map((a) => {
-                const pnl = a.costBasis ? ((a.currentValue - a.costBasis) / a.costBasis) * 100 : 0;
-                const label = ASSET_TYPES.find((t) => t.value === a.type)?.label ?? a.type;
+            <tbody>
+              {pager.slice.map((a) => {
+                const val = toUsd(a.currentValue, a.currency, data.fx.average);
+                const cost = toUsd(a.costBasis, a.currency, data.fx.average);
+                const pnl = cost ? ((val - cost) / cost) * 100 : 0;
                 return (
-                  <tr key={a.id} className="hover:bg-raised">
+                  <tr key={a.id} className="border-b border-border/50 hover:bg-black/30">
                     <td className="px-2 py-1.5">
-                      <p className="text-fg">{a.name}</p>
-                      {a.ticker ? <p className="text-[10px] text-accent">{a.ticker}</p> : null}
+                      <span className="text-fg">{a.name}</span>
+                      {a.ticker ? (
+                        <span className="ml-1 text-subtle">{a.ticker}</span>
+                      ) : null}
                     </td>
-                    <td className="px-2 py-1.5 text-muted">{label.toUpperCase()}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">{formatUsd(a.currentValue)}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-muted">{formatUsd(a.costBasis)}</td>
-                    <td className={`px-2 py-1.5 text-right tabular-nums ${pnl >= 0 ? "text-gain" : "text-loss"}`}>
+                    <td className="px-2 py-1.5 text-muted">{a.type}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-subtle">
+                      {a.quantity}
+                    </td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">
+                      {formatUsd(a.currentValue)}
+                    </td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-muted">
+                      {formatUsd(a.costBasis)}
+                    </td>
+                    <td
+                      className={`px-2 py-1.5 text-right tabular-nums ${
+                        pnl >= 0 ? "text-gain" : "text-loss"
+                      }`}
+                    >
                       {formatPct(pnl)}
                     </td>
                     <td className="px-2 py-1.5">
                       <div className="flex justify-end gap-1">
-                        <Button variant="ghost" size="icon-sm" aria-label="Editar" onClick={() => setEditing(a)}>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label="Editar"
+                          onClick={() => setEditing(a)}
+                        >
                           <Pencil className="size-4" />
                         </Button>
                         <Button asChild variant="ghost" size="icon-sm">
@@ -118,7 +142,18 @@ export default function AssetsPage() {
           <p className="py-16 text-center text-sm text-muted">
             No hay activos. Agregá el primero — queda guardado en la base.
           </p>
-        ) : null}
+        ) : (
+          <div className="px-2 pb-2">
+            <Pager
+              page={pager.page}
+              totalPages={pager.totalPages}
+              total={pager.total}
+              from={pager.from}
+              to={pager.to}
+              onChange={pager.setPage}
+            />
+          </div>
+        )}
       </div>
 
       {editing !== null ? (
@@ -147,7 +182,11 @@ export default function AssetsPage() {
       <ConfirmDelete
         open={!!deleting}
         title="Eliminar activo"
-        body={deleting ? `Se va a borrar “${deleting.name}” de la base de datos. No vuelve al cambiar de pantalla.` : ""}
+        body={
+          deleting
+            ? `Se va a borrar “${deleting.name}” de la base de datos. No vuelve al cambiar de pantalla.`
+            : ""
+        }
         pending={pending}
         onClose={() => setDeleting(null)}
         onConfirm={async () => {
