@@ -112,7 +112,6 @@ const DEFAULT_SPANS: Partial<Record<PanelId, PanelSpan>> = {
  *  dashboard stays readable instead of rendering all 22 at once. */
 export const DEFAULT_HIDDEN: PanelId[] = [
   "coupons24",
-  "bondYields",
   "amorts",
   "incomeExpense",
   "allocTarget",

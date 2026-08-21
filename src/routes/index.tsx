@@ -22,6 +22,7 @@ import { Pager, usePager } from "@/components/ui/pager";
 import { getPortfolio } from "@/lib/server/portfolio";
 import { computeAnalytics } from "@/lib/analytics";
 import { portfolioReturn } from "@/lib/returns";
+import { bondMetrics } from "@/lib/bonds";
 import {
   computeDashboard,
   INCOME_KIND_META,
@@ -61,6 +62,10 @@ function Dashboard() {
   const s = useMemo(() => computeDashboard(data), [data]);
   const a = useMemo(() => computeAnalytics(data), [data]);
   const ret = useMemo(() => portfolioReturn(data), [data]);
+  const bonds = useMemo(
+    () => bondMetrics(data.assets, data.transactions, data.fx.average),
+    [data.assets, data.transactions, data.fx.average],
+  );
   const debtUsd = useMemo(
     () =>
       data.liabilities.reduce(
@@ -90,7 +95,7 @@ function Dashboard() {
   const holdingsPager = usePager(s.holdings, 10);
   const couponsPager = usePager(a.coupons, 10);
   const amortsPager = usePager(a.amorts, 10);
-  const bondYieldsPager = usePager(a.bondYields, 10);
+  const bondYieldsPager = usePager(bonds, 10);
   const pnlContribPager = usePager(a.pnlContrib, 10);
   const costLadderPager = usePager(a.costLadder, 10);
   const returnsRanked = useMemo(
@@ -836,20 +841,22 @@ function Dashboard() {
               action={
                 <Tip
                   inline
-                  content="Yield estimado por bono = cupones 12m ÷ valor de mercado actual."
+                  content="CUR = cupones de los próximos 12m sobre el valor actual. YTM = TIR de pagar hoy el precio y cobrar todo el schedule (actual/365, sin intereses corridos). DUR = duración modificada: variación aproximada de precio por cada punto de yield."
                 >
                   <Hint />
                 </Tip>
               }
             >
               <TableWrap>
-                <table className="w-full min-w-[420px] border-collapse font-mono text-[12px]">
+                <table className="w-full min-w-[520px] border-collapse font-mono text-[12px]">
                   <thead>
                     <tr className="border-b border-line text-left text-[11px] text-muted">
                       <th className="py-1 pr-2">BOND</th>
                       <th className="py-1 pr-2 text-right">VALUE</th>
-                      <th className="py-1 pr-2 text-right">INCOME/YR</th>
-                      <th className="py-1 text-right">YLD</th>
+                      <th className="py-1 pr-2 text-right">CUR</th>
+                      <th className="py-1 pr-2 text-right">YTM</th>
+                      <th className="py-1 pr-2 text-right">DUR</th>
+                      <th className="py-1 text-right">VTO</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -860,30 +867,52 @@ function Dashboard() {
                       >
                         <td className="py-1 pr-2 truncate text-fg">{b.name}</td>
                         <td className="py-1 pr-2 text-right tabular-nums">
-                          {formatUsd(b.value)}
+                          {formatUsd(b.priceUsd)}
                         </td>
-                        <td className="py-1 pr-2 text-right tabular-nums text-gain">
-                          {formatUsd(b.yearlyIncome)}
+                        <td className="py-1 pr-2 text-right tabular-nums text-muted">
+                          {b.currentYield === null
+                            ? "—"
+                            : `${(b.currentYield * 100).toFixed(1)}%`}
                         </td>
-                        <td className="py-1 text-right tabular-nums text-accent">
-                          {b.yieldPct.toFixed(1)}%
+                        <td className="py-1 pr-2 text-right tabular-nums text-accent">
+                          {b.ytm === null
+                            ? "—"
+                            : `${(b.ytm * 100).toFixed(1)}%`}
+                        </td>
+                        <td className="py-1 pr-2 text-right tabular-nums text-muted">
+                          {b.modified === null
+                            ? "—"
+                            : `${b.modified.toFixed(1)}a`}
+                        </td>
+                        <td className="py-1 text-right tabular-nums text-subtle">
+                          {b.maturity ? b.maturity.slice(2, 7) : "—"}
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-                {a.bondYields.length === 0 ? (
+                {bonds.length === 0 ? (
                   <p className="font-mono text-xs text-muted">sin bonos</p>
                 ) : (
-                  <Pager
-                    page={bondYieldsPager.page}
-                    totalPages={bondYieldsPager.totalPages}
-                    total={bondYieldsPager.total}
-                    from={bondYieldsPager.from}
-                    to={bondYieldsPager.to}
-                    onChange={bondYieldsPager.setPage}
-                    className="mt-1"
-                  />
+                  <>
+                    <Pager
+                      page={bondYieldsPager.page}
+                      totalPages={bondYieldsPager.totalPages}
+                      total={bondYieldsPager.total}
+                      from={bondYieldsPager.from}
+                      to={bondYieldsPager.to}
+                      onChange={bondYieldsPager.setPage}
+                      className="mt-1"
+                    />
+                    {bonds.every((b) => b.ytm === null) ? (
+                      <p className="mt-1 font-mono text-[11px] text-subtle">
+                        YTM y DUR necesitan la devolución de capital en el
+                        schedule. Hoy solo hay cupones cargados, así que los
+                        flujos nunca recuperan el capital y no hay TIR que
+                        calcular.
+                      </p>
+                    ) : null}
+                  </>
                 )}
               </TableWrap>
             </Monitor>
