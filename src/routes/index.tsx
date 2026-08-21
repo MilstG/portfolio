@@ -14,7 +14,11 @@ import {
 } from "recharts";
 import { Monitor } from "@/components/monitor";
 import { getPortfolio } from "@/lib/server/portfolio";
-import { computeDashboard } from "@/lib/portfolio-math";
+import {
+  computeDashboard,
+  INCOME_KIND_META,
+  type IncomeKind,
+} from "@/lib/portfolio-math";
 import { formatUsd, formatPct } from "@/lib/utils";
 
 export const Route = createFileRoute("/")({
@@ -27,7 +31,6 @@ const COLORS = ["#ff6d00", "#22c55e", "#3b82f6", "#a855f7", "#eab308", "#ef4444"
 function Dashboard() {
   const data = Route.useLoaderData();
   const s = computeDashboard(data);
-  // Always include live NW so the series is never blank after first load
   const today = new Date().toISOString().slice(0, 10);
   const snapPts = data.snapshots.map((x) => ({
     date: x.date,
@@ -41,7 +44,6 @@ function Dashboard() {
       value: s.nw,
     });
   } else {
-    // refresh today's point with live NW
     const last = snapPts.find((x) => x.date === today);
     if (last) last.value = s.nw;
   }
@@ -285,30 +287,66 @@ function Dashboard() {
           </div>
         </Monitor>
         <Monitor title="PROJ INCOME 12M">
-          <div className="h-36">
-            {s.projMonths.some((m) => m.total > 0) ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={s.projMonths} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-                  <XAxis
-                    dataKey="label"
-                    tick={{ fill: "#6b7280", fontSize: 10, fontFamily: "IBM Plex Mono" }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <YAxis hide />
-                  <Tooltip
-                    contentStyle={{
-                      background: "#000",
-                      border: "1px solid #ff6d00",
-                      borderRadius: 0,
-                      fontSize: 11,
-                      fontFamily: "IBM Plex Mono",
-                    }}
-                    formatter={(v: number) => [formatUsd(v), "income"]}
-                  />
-                  <Bar dataKey="total" fill="#ff6d00" />
-                </BarChart>
-              </ResponsiveContainer>
+          <div className="flex h-40 flex-col">
+            {s.projStacked.some((m) => m.total > 0) ? (
+              <>
+                <div className="min-h-0 flex-1">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={s.projStacked}
+                      margin={{ top: 4, right: 4, left: 0, bottom: 0 }}
+                    >
+                      <XAxis
+                        dataKey="label"
+                        tick={{
+                          fill: "#6b7280",
+                          fontSize: 10,
+                          fontFamily: "IBM Plex Mono",
+                        }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <YAxis hide />
+                      <Tooltip
+                        contentStyle={{
+                          background: "#000",
+                          border: "1px solid #ff6d00",
+                          borderRadius: 0,
+                          fontSize: 11,
+                          fontFamily: "IBM Plex Mono",
+                        }}
+                        formatter={(v: number, name: string) => [
+                          formatUsd(v),
+                          INCOME_KIND_META[name as IncomeKind]?.label ?? name,
+                        ]}
+                      />
+                      {s.projKinds.map((k) => (
+                        <Bar
+                          key={k}
+                          dataKey={k}
+                          stackId="inc"
+                          fill={INCOME_KIND_META[k].color}
+                          fillOpacity={0.9}
+                        />
+                      ))}
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 border-t border-line pt-1">
+                  {s.projKinds.map((k) => (
+                    <span
+                      key={k}
+                      className="flex items-center gap-1 font-mono text-[9px] text-muted"
+                    >
+                      <span
+                        className="inline-block h-1.5 w-1.5"
+                        style={{ background: INCOME_KIND_META[k].color }}
+                      />
+                      {INCOME_KIND_META[k].label}
+                    </span>
+                  ))}
+                </div>
+              </>
             ) : (
               <p className="font-mono text-xs text-muted">NO PROJECTION</p>
             )}
