@@ -15,11 +15,14 @@ import { Pager, usePager } from "@/components/ui/pager";
 import { Dialog } from "@/components/ui/dialog";
 import { Field, Input, Select } from "@/components/ui/input";
 import {
+  activeIncomeKinds,
   categoryBreakdown,
-  monthlyProjectionBuckets,
+  INCOME_KIND_META,
+  monthlyProjectionStacked,
   monthlyTxSeries,
-  projectRecurring,
+  projectCashflow,
   txTotals,
+  type IncomeKind,
 } from "@/lib/portfolio-math";
 import {
   addTransaction,
@@ -69,12 +72,13 @@ function CashflowPage() {
 
   const stats = useMemo(() => {
     const totals = txTotals(data.transactions, data.fx.average);
-    const projected = projectRecurring(data.recurring, data.fx.average, 12);
-    const projMonths = monthlyProjectionBuckets(projected, 12);
+    const projected = projectCashflow(data.recurring, data.transactions, data.fx.average, 12);
+    const projStacked = monthlyProjectionStacked(projected, 12);
+    const projKinds = activeIncomeKinds(projStacked);
     const series = monthlyTxSeries(data.transactions, data.fx.average, 6);
     const cats = categoryBreakdown(data.transactions, data.fx.average);
     const projectedTotal = projected.reduce((s, e) => s + e.amountUsd, 0);
-    return { totals, projected, projMonths, series, cats, projectedTotal };
+    return { totals, projected, projStacked, projKinds, series, cats, projectedTotal };
   }, [data]);
 
   const recPager = usePager(data.recurring, 10);
@@ -193,18 +197,61 @@ function CashflowPage() {
           </div>
         </Panel>
         <Panel title="PROJECTED RECURRING 12M">
-          <div className="h-40">
-            {stats.projMonths.some((m) => m.total > 0) ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={stats.projMonths} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-                  <XAxis dataKey="label" tick={{ fill: "#6b7280", fontSize: 9, fontFamily: "IBM Plex Mono" }} axisLine={false} tickLine={false} interval={1} />
-                  <YAxis hide />
-                  <Tooltip contentStyle={{ background: "#000", border: "1px solid #ff6d00", borderRadius: 0, fontSize: 11, fontFamily: "IBM Plex Mono" }} formatter={(v: number) => [formatUsd(v), "PROJ"]} />
-                  <Bar dataKey="total" fill="#ff6d00" fillOpacity={0.85} />
-                </BarChart>
-              </ResponsiveContainer>
+          <div className="flex h-44 flex-col">
+            {stats.projStacked.some((m) => m.total > 0) ? (
+              <>
+                <div className="min-h-0 flex-1">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={stats.projStacked} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                      <XAxis
+                        dataKey="label"
+                        tick={{ fill: "#6b7280", fontSize: 9, fontFamily: "IBM Plex Mono" }}
+                        axisLine={false}
+                        tickLine={false}
+                        interval={1}
+                      />
+                      <YAxis hide />
+                      <Tooltip
+                        contentStyle={{
+                          background: "#000",
+                          border: "1px solid #ff6d00",
+                          borderRadius: 0,
+                          fontSize: 11,
+                          fontFamily: "IBM Plex Mono",
+                        }}
+                        formatter={(v: number, name: string) => [
+                          formatUsd(v),
+                          INCOME_KIND_META[name as IncomeKind]?.label ?? name,
+                        ]}
+                      />
+                      {stats.projKinds.map((k) => (
+                        <Bar
+                          key={k}
+                          dataKey={k}
+                          stackId="inc"
+                          fill={INCOME_KIND_META[k].color}
+                          fillOpacity={0.9}
+                        />
+                      ))}
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 border-t border-line pt-1">
+                  {stats.projKinds.map((k) => (
+                    <span key={k} className="flex items-center gap-1 font-mono text-[9px] text-muted">
+                      <span
+                        className="inline-block h-1.5 w-1.5"
+                        style={{ background: INCOME_KIND_META[k].color }}
+                      />
+                      {INCOME_KIND_META[k].label}
+                    </span>
+                  ))}
+                </div>
+              </>
             ) : (
-              <p className="py-8 text-center font-mono text-xs text-muted">Mappeá ingresos recurrentes a tus activos.</p>
+              <p className="py-8 text-center font-mono text-xs text-muted">
+                Mappeá ingresos recurrentes a tus activos.
+              </p>
             )}
           </div>
         </Panel>
