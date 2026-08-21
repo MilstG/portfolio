@@ -11,7 +11,7 @@ import {
 } from "recharts";
 import { Pencil, RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Field, Input, Select } from "@/components/ui/input";
+import { Field, Input, Select, Textarea } from "@/components/ui/input";
 import { Monitor, PageHeader } from "@/components/ui/monitor";
 import { setPin } from "@/lib/server/auth";
 import {
@@ -26,6 +26,7 @@ import {
   upsertLiability,
   upsertWatchItem,
 } from "@/lib/server/portfolio";
+import { backfillSnapshots } from "@/lib/server/extra-actions";
 import { formatUsd, toUsd } from "@/lib/utils";
 
 export const Route = createFileRoute("/settings")({
@@ -49,6 +50,8 @@ function SettingsPage() {
   const [blue, setBlue] = useState(String(data.fx.blue));
   const [mep, setMep] = useState(String(data.fx.mep));
   const [pending, setPending] = useState(false);
+  const [snapshotCsv, setSnapshotCsv] = useState("");
+  const [snapBusy, setSnapBusy] = useState(false);
   const avg =
     ((Number(official) || 0) + (Number(blue) || 0) + (Number(mep) || 0)) / 3;
 
@@ -798,6 +801,82 @@ function SettingsPage() {
               {wPending ? "…" : "Agregar"}
             </Button>
           </form>
+        </Monitor>
+
+        <Monitor title="HISTORIAL DE NET WORTH">
+          <p className="mb-2 font-mono text-[12px] text-muted">
+            Los snapshots solo se acumulan desde que la app corre, así que NW
+            SERIES y DRAWDOWN arrancan vacíos. Pegá el histórico que tengas, una
+            línea por día: <span className="text-fg">fecha,valor</span> en USD.
+          </p>
+          <p className="mb-2 font-mono text-[11px] text-subtle">
+            {data.snapshots.length} punto
+            {data.snapshots.length === 1 ? "" : "s"} cargado
+            {data.snapshots.length === 1 ? "" : "s"}
+            {data.snapshots.length > 0
+              ? ` · ${data.snapshots[0].date} → ${data.snapshots[data.snapshots.length - 1].date}`
+              : ""}
+          </p>
+          <Textarea
+            rows={5}
+            value={snapshotCsv}
+            onChange={(e) => setSnapshotCsv(e.target.value)}
+            placeholder={"2025-01-31,180000\n2025-02-28,184500"}
+            className="mb-2"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              disabled={snapBusy || !snapshotCsv.trim()}
+              onClick={async () => {
+                const rows: { date: string; totalUsd: number }[] = [];
+                const bad: string[] = [];
+                for (const raw of snapshotCsv.split(/\r?\n/)) {
+                  const line = raw.trim();
+                  if (!line || /^fecha|^date/i.test(line)) continue;
+                  const [d, v] = line.split(/[,;\t]/);
+                  const date = (d || "").trim();
+                  // Tolerate "1.234,56" and "1,234.56" alike: drop thousands
+                  // separators, then normalise the decimal comma.
+                  const num = Number(
+                    (v || "")
+                      .trim()
+                      .replace(/[^0-9,.-]/g, "")
+                      .replace(/\.(?=\d{3}\b)/g, "")
+                      .replace(",", "."),
+                  );
+                  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(num) || num < 0) {
+                    bad.push(line);
+                    continue;
+                  }
+                  rows.push({ date, totalUsd: num });
+                }
+                if (rows.length === 0) {
+                  toast.error("Ninguna línea válida (formato: 2025-01-31,180000)");
+                  return;
+                }
+                setSnapBusy(true);
+                try {
+                  const res = await backfillSnapshots({ data: { rows } });
+                  await router.invalidate();
+                  setSnapshotCsv("");
+                  toast.success(
+                    `${res.written} snapshot${res.written === 1 ? "" : "s"} guardado${res.written === 1 ? "" : "s"}` +
+                      (bad.length ? ` · ${bad.length} línea(s) ignorada(s)` : ""),
+                  );
+                } catch {
+                  toast.error("No se pudo guardar el historial");
+                } finally {
+                  setSnapBusy(false);
+                }
+              }}
+            >
+              {snapBusy ? "Guardando…" : "Cargar historial"}
+            </Button>
+            <span className="font-mono text-[11px] text-subtle">
+              una fecha repetida pisa el valor anterior
+            </span>
+          </div>
         </Monitor>
 
         <Monitor title="EXPORT">

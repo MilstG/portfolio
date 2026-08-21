@@ -41,7 +41,8 @@ export type PanelId =
   | "rebalance"
   | "costLadder"
   | "goals"
-  | "returns";
+  | "returns"
+  | "benchmark";
 
 /** Column span: 1 = 1 col, 2 = 2 cols, 3 = full width. */
 export type PanelSpan = 1 | 2 | 3;
@@ -70,6 +71,7 @@ export const PANEL_LABELS: Record<PanelId, string> = {
   costLadder: "COST LADDER",
   goals: "GOALS",
   returns: "RETORNO ANUAL",
+  benchmark: "NW vs DÓLAR",
 };
 
 export const DEFAULT_LAYOUT: PanelId[] = [
@@ -77,6 +79,7 @@ export const DEFAULT_LAYOUT: PanelId[] = [
   "incomeWindow",
   "insights",
   "returns",
+  "benchmark",
   "holdings",
   "nwSeries",
   "projIncome",

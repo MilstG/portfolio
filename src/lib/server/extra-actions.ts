@@ -95,6 +95,54 @@ export const importTransactionsCsv = createServerFn({ method: "POST" })
     return { inserted: rows.length };
   });
 
+/**
+ * Bulk-load historical net-worth points.
+ *
+ * Snapshots only ever accrued forward from the day the app started running, so
+ * NW SERIES, DRAWDOWN and any benchmark had nothing to plot. This lets a real
+ * history be pasted in once.
+ */
+export const backfillSnapshots = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
+  .validator(
+    z.object({
+      rows: z
+        .array(
+          z.object({
+            date: z.string().regex(/^\d{4}-\d{2}-\d{2}/),
+            totalUsd: z.number().finite().nonnegative(),
+          }),
+        )
+        .max(5000),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const sql = await getSql();
+    // Later rows win on a duplicate date, matching the on-conflict below.
+    const byDate = new Map<string, number>();
+    for (const r of data.rows) byDate.set(r.date.slice(0, 10), r.totalUsd);
+    const rows = [...byDate.entries()];
+    if (rows.length === 0) return { written: 0 };
+    await sql.query(
+      `insert into snapshots (date, total_usd)
+       select * from unnest($1::date[], $2::numeric[])
+       on conflict (date) do update set total_usd = excluded.total_usd`,
+      [rows.map((r) => r[0]), rows.map((r) => r[1])],
+    );
+    return { written: rows.length };
+  });
+
+export const deleteSnapshot = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
+  .validator(z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}/) }))
+  .handler(async ({ data }) => {
+    const sql = await getSql();
+    await sql.query(`delete from snapshots where date = $1`, [
+      data.date.slice(0, 10),
+    ]);
+    return { ok: true };
+  });
+
 export const upsertTaxLot = createServerFn({ method: "POST" })
   .middleware([requireAuth])
   .validator(

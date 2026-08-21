@@ -19,10 +19,12 @@ import { DashboardGrid } from "@/components/dashboard-grid";
 import { Hint, Monitor, TableWrap } from "@/components/ui/monitor";
 import { Tip } from "@/components/ui/tip";
 import { Pager, usePager } from "@/components/ui/pager";
+import { RangeSelect, useRange } from "@/components/ui/range";
 import { getPortfolio } from "@/lib/server/portfolio";
 import { computeAnalytics } from "@/lib/analytics";
 import { portfolioReturn } from "@/lib/returns";
 import { bondMetrics } from "@/lib/bonds";
+import { computeBenchmark } from "@/lib/benchmark";
 import {
   computeDashboard,
   INCOME_KIND_META,
@@ -62,6 +64,10 @@ function Dashboard() {
   const s = useMemo(() => computeDashboard(data), [data]);
   const a = useMemo(() => computeAnalytics(data), [data]);
   const ret = useMemo(() => portfolioReturn(data), [data]);
+  const bench = useMemo(
+    () => computeBenchmark(data.snapshots, data.fxHistory),
+    [data.snapshots, data.fxHistory],
+  );
   const bonds = useMemo(
     () => bondMetrics(data.assets, data.transactions, data.fx.average),
     [data.assets, data.transactions, data.fx.average],
@@ -92,6 +98,7 @@ function Dashboard() {
     return pts;
   }, [data.snapshots, s.nw]);
 
+  const nwRange = useRange(chart, "ALL");
   const holdingsPager = usePager(s.holdings, 10);
   const couponsPager = usePager(a.coupons, 10);
   const amortsPager = usePager(a.amorts, 10);
@@ -552,19 +559,25 @@ function Dashboard() {
             <Monitor
               title="NW SERIES"
               action={
-                <Tip
-                  inline
-                  content="Histórico de net worth desde snapshots diarios. El punto de hoy es el NW live."
-                >
-                  <Hint />
-                </Tip>
+                <div className="flex items-center gap-1.5">
+                  <RangeSelect
+                    value={nwRange.range}
+                    onChange={nwRange.setRange}
+                  />
+                  <Tip
+                    inline
+                    content="Histórico de net worth desde snapshots diarios. El punto de hoy es el NW live. Cargá historial viejo en CFG → HISTORIAL DE NET WORTH."
+                  >
+                    <Hint />
+                  </Tip>
+                </div>
               }
             >
               <div className="h-36">
-                {chart.length >= 2 ? (
+                {nwRange.slice.length >= 2 ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart
-                      data={chart}
+                      data={nwRange.slice}
                       margin={{ top: 4, right: 4, left: 0, bottom: 0 }}
                     >
                       <XAxis
@@ -1598,6 +1611,93 @@ function Dashboard() {
                       onChange={returnsPager.setPage}
                     />
                   </TableWrap>
+                </div>
+              )}
+            </Monitor>
+          ),
+
+          benchmark: (
+            <Monitor
+              title="NW vs DÓLAR"
+              action={
+                <Tip
+                  inline
+                  content="Patrimonio y tipo de cambio rebasados a 100 al inicio de la ventana. El libro ya está valuado en USD, así que esto responde si creció más rápido de lo que se movió la moneda. fx_history suma una fila por cada día que actualizás el FX."
+                >
+                  <Hint />
+                </Tip>
+              }
+            >
+              {bench === null ? (
+                <p className="font-mono text-xs text-muted">
+                  faltan datos para comparar: hacen falta al menos dos
+                  snapshots posteriores al primer registro de FX. El historial
+                  de FX suma una fila cada vez que actualizás el dólar en CFG.
+                </p>
+              ) : (
+                <div className="flex h-40 flex-col">
+                  <div className="mb-1 flex flex-wrap gap-x-4 gap-y-0.5 font-mono text-[11px]">
+                    <span className={bench.nwChange >= 0 ? "text-gain" : "text-loss"}>
+                      NW {formatPct(bench.nwChange * 100)}
+                    </span>
+                    <span className="text-cat-1">
+                      BLUE {formatPct(bench.blueChange * 100)}
+                    </span>
+                    <span className="text-cat-2">
+                      MEP {formatPct(bench.mepChange * 100)}
+                    </span>
+                    <span className="text-subtle">
+                      {bench.from} → {bench.to}
+                    </span>
+                  </div>
+                  <div className="min-h-0 flex-1">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart
+                        data={bench.points}
+                        margin={{ top: 4, right: 4, left: 0, bottom: 0 }}
+                      >
+                        <XAxis
+                          dataKey="label"
+                          tick={{
+                            fill: "#6b7280",
+                            fontSize: 10,
+                            fontFamily: "IBM Plex Mono",
+                          }}
+                          axisLine={false}
+                          tickLine={false}
+                        />
+                        <YAxis hide domain={["dataMin - 5", "dataMax + 5"]} />
+                        <Tooltip
+                          contentStyle={CHART_TIP}
+                          formatter={(v: number, n: string) => [
+                            v.toFixed(1),
+                            n.toUpperCase(),
+                          ]}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="nw"
+                          stroke="#00e676"
+                          strokeWidth={1.5}
+                          dot={false}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="blue"
+                          stroke="#4aa3ff"
+                          strokeWidth={1.25}
+                          dot={false}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="mep"
+                          stroke="#a78bfa"
+                          strokeWidth={1.25}
+                          dot={false}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
                 </div>
               )}
             </Monitor>
