@@ -1,4 +1,4 @@
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { Plus, Trash2 } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
@@ -20,8 +20,20 @@ import {
   projectRecurring,
   txTotals,
 } from "@/lib/portfolio-math";
-import { addTransaction, deleteTransaction, getPortfolio } from "@/lib/server/portfolio";
-import { CURRENCIES, TX_TYPES, formatUsd, toUsd } from "@/lib/utils";
+import {
+  addTransaction,
+  deleteRecurring,
+  deleteTransaction,
+  getPortfolio,
+  upsertRecurring,
+} from "@/lib/server/portfolio";
+import {
+  CURRENCIES,
+  FREQUENCIES,
+  TX_TYPES,
+  formatUsd,
+  toUsd,
+} from "@/lib/utils";
 
 export const Route = createFileRoute("/cashflow")({
   loader: () => getPortfolio(),
@@ -32,12 +44,35 @@ function CashflowPage() {
   const data = Route.useLoaderData();
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [recOpen, setRecOpen] = useState(false);
   const [desc, setDesc] = useState("");
   const [amount, setAmount] = useState("");
   const [type, setType] = useState("EXPENSE");
   const [currency, setCurrency] = useState("USD");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [category, setCategory] = useState("");
+
+  // Recurring form — mapped to existing asset (+ optional cash account)
+  const [recName, setRecName] = useState("");
+  const [recAmount, setRecAmount] = useState("");
+  const [recCur, setRecCur] = useState("USD");
+  const [recFreq, setRecFreq] = useState("MONTHLY");
+  const [recDate, setRecDate] = useState(new Date().toISOString().slice(0, 10));
+  const [recAssetId, setRecAssetId] = useState(data.assets[0]?.id ?? "");
+  const [recAccountId, setRecAccountId] = useState("");
+  const [pending, setPending] = useState(false);
+
+  const assetById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const a of data.assets) m.set(a.id, a.ticker ? `${a.ticker} · ${a.name}` : a.name);
+    return m;
+  }, [data.assets]);
+
+  const accountById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const a of data.accounts) m.set(a.id, `${a.name} (${a.currency})`);
+    return m;
+  }, [data.accounts]);
 
   const stats = useMemo(() => {
     const totals = txTotals(data.transactions, data.fx.average);
@@ -54,9 +89,21 @@ function CashflowPage() {
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="font-mono text-sm tracking-widest text-accent">FLUJO</h1>
-        <Button onClick={() => setOpen(true)}>
-          <Plus className="size-3.5" /> ADD
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setRecAssetId(data.assets[0]?.id ?? "");
+              setRecOpen(true);
+            }}
+            disabled={data.assets.length === 0}
+          >
+            <Plus className="size-3.5" /> RECURRING
+          </Button>
+          <Button onClick={() => setOpen(true)}>
+            <Plus className="size-3.5" /> TX
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
@@ -69,6 +116,76 @@ function CashflowPage() {
         />
         <Kpi label="PROJ 12M" value={formatUsd(stats.projectedTotal)} tone="accent" />
       </div>
+
+      <Panel title="RECURRING · MAPPED TO ASSETS">
+        {data.assets.length === 0 ? (
+          <p className="py-6 text-center font-mono text-xs text-muted">
+            Primero cargá un activo en{" "}
+            <Link to="/assets" className="text-accent underline">
+              POS
+            </Link>{" "}
+            y después mappeá el flujo acá.
+          </p>
+        ) : data.recurring.length === 0 ? (
+          <p className="py-6 text-center font-mono text-xs text-muted">
+            Sin flujos recurrentes. Usá RECURRING para mappear alquiler/cupón a un activo existente.
+          </p>
+        ) : (
+          <table className="w-full font-mono text-[11px]">
+            <thead>
+              <tr className="border-b border-border text-left text-[10px] tracking-widest text-accent">
+                <th className="py-1 pr-2">NAME</th>
+                <th className="py-1 pr-2">ASSET</th>
+                <th className="py-1 pr-2">TO CASH</th>
+                <th className="py-1 pr-2">FREQ</th>
+                <th className="py-1 pr-2 text-right">AMT</th>
+                <th className="py-1 pr-2">NEXT</th>
+                <th className="py-1 text-right"> </th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.recurring.map((r) => (
+                <tr key={r.id} className="border-b border-border/50">
+                  <td className="truncate py-1.5 pr-2 text-fg">{r.name}</td>
+                  <td className="truncate py-1.5 pr-2">
+                    <Link
+                      to="/assets/$id"
+                      params={{ id: r.assetId }}
+                      className="text-accent hover:underline"
+                    >
+                      {assetById.get(r.assetId) || r.assetId.slice(0, 8)}
+                    </Link>
+                  </td>
+                  <td className="truncate py-1.5 pr-2 text-muted">
+                    {r.accountId ? accountById.get(r.accountId) || "—" : "—"}
+                  </td>
+                  <td className="py-1.5 pr-2 text-muted">
+                    {FREQUENCIES.find((f) => f.value === r.frequency)?.label || r.frequency}
+                  </td>
+                  <td className="py-1.5 pr-2 text-right tabular-nums text-gain">
+                    {formatUsd(toUsd(r.amount, r.currency, data.fx.average))}
+                  </td>
+                  <td className="py-1.5 pr-2 text-muted">{r.nextDate}</td>
+                  <td className="py-1.5 text-right">
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="Eliminar recurrente"
+                      onClick={async () => {
+                        await deleteRecurring({ data: { id: r.id } });
+                        toast.success("Recurrente eliminado");
+                        await router.invalidate();
+                      }}
+                    >
+                      <Trash2 className="size-4 text-loss" />
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Panel>
 
       <div className="grid gap-2 lg:grid-cols-2">
         <Panel title="MONTHLY IN / OUT (listed txs)">
@@ -133,7 +250,7 @@ function CashflowPage() {
               </ResponsiveContainer>
             ) : (
               <p className="py-8 text-center font-mono text-xs text-muted">
-                Configurá ingresos recurrentes en cada activo (alquiler, cupón).
+                Mappeá ingresos recurrentes a tus activos.
               </p>
             )}
           </div>
@@ -147,6 +264,7 @@ function CashflowPage() {
               <tr className="border-b border-border text-left text-[10px] tracking-widest text-accent">
                 <th className="py-1">DATE</th>
                 <th className="py-1">NAME</th>
+                <th className="py-1">ASSET</th>
                 <th className="py-1 text-right">USD</th>
               </tr>
             </thead>
@@ -155,6 +273,9 @@ function CashflowPage() {
                 <tr key={`${e.date}-${e.name}-${i}`} className="border-b border-border/50">
                   <td className="py-1 text-muted">{e.date}</td>
                   <td className="truncate py-1">{e.name}</td>
+                  <td className="truncate py-1 text-subtle">
+                    {assetById.get(e.assetId) || "—"}
+                  </td>
                   <td className="py-1 text-right tabular-nums text-gain">
                     {formatUsd(e.amountUsd)}
                   </td>
@@ -162,7 +283,7 @@ function CashflowPage() {
               ))}
               {stats.nextEvents.length === 0 ? (
                 <tr>
-                  <td className="py-8 text-center text-subtle" colSpan={3}>
+                  <td className="py-8 text-center text-subtle" colSpan={4}>
                     Sin eventos proyectados
                   </td>
                 </tr>
@@ -205,6 +326,9 @@ function CashflowPage() {
                 <p className="truncate text-fg">{t.description}</p>
                 <p className="text-[10px] text-subtle">
                   {t.date} · {t.category || t.type}
+                  {t.assetId && assetById.get(t.assetId)
+                    ? ` · ${assetById.get(t.assetId)}`
+                    : ""}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -232,6 +356,116 @@ function CashflowPage() {
           ) : null}
         </ul>
       </Panel>
+
+      <Dialog open={recOpen} onOpenChange={setRecOpen} title="Mapear flujo recurrente">
+        <form
+          className="grid gap-4"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (!recAssetId) {
+              toast.error("Elegí un activo");
+              return;
+            }
+            setPending(true);
+            try {
+              await upsertRecurring({
+                data: {
+                  assetId: recAssetId,
+                  accountId: recAccountId || null,
+                  name: recName,
+                  amount: Number(recAmount) || 0,
+                  currency: recCur,
+                  frequency: recFreq,
+                  nextDate: recDate || new Date().toISOString().slice(0, 10),
+                },
+              });
+              toast.success("Flujo mapeado al activo");
+              setRecOpen(false);
+              setRecName("");
+              setRecAmount("");
+              setRecAccountId("");
+              await router.invalidate();
+            } catch (err) {
+              toast.error(err instanceof Error ? err.message : "No se pudo guardar");
+            } finally {
+              setPending(false);
+            }
+          }}
+        >
+          <Field label="Activo (obligatorio)">
+            <Select
+              required
+              value={recAssetId}
+              onChange={(e) => setRecAssetId(e.target.value)}
+            >
+              <option value="" disabled>
+                Elegí un activo cargado…
+              </option>
+              {data.assets.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {(a.ticker ? `${a.ticker} · ` : "") + a.name} ({a.type})
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Cuenta cash destino (opcional)">
+            <Select value={recAccountId} onChange={(e) => setRecAccountId(e.target.value)}>
+              <option value="">Sin acreditar cuenta</option>
+              {data.accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name} · {a.currency}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Concepto">
+            <Input
+              required
+              value={recName}
+              onChange={(e) => setRecName(e.target.value)}
+              placeholder="Alquiler, cupón, dividendo…"
+            />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Monto">
+              <Input
+                required
+                type="number"
+                step="any"
+                value={recAmount}
+                onChange={(e) => setRecAmount(e.target.value)}
+              />
+            </Field>
+            <Field label="Moneda">
+              <Select value={recCur} onChange={(e) => setRecCur(e.target.value)}>
+                {CURRENCIES.map((c) => (
+                  <option key={c}>{c}</option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+          <Field label="Frecuencia">
+            <Select value={recFreq} onChange={(e) => setRecFreq(e.target.value)}>
+              {FREQUENCIES.map((f) => (
+                <option key={f.value} value={f.value}>
+                  {f.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Próxima fecha">
+            <Input type="date" value={recDate} onChange={(e) => setRecDate(e.target.value)} />
+          </Field>
+          <p className="font-mono text-[10px] text-subtle">
+            Al vencer, se genera la tx ligada al activo. Si elegís cuenta cash, se acredita el saldo.
+          </p>
+          <div className="flex justify-end">
+            <Button type="submit" disabled={pending}>
+              {pending ? "Guardando…" : "Mapear"}
+            </Button>
+          </div>
+        </form>
+      </Dialog>
 
       <Dialog open={open} onOpenChange={setOpen} title="Nuevo movimiento">
         <form
