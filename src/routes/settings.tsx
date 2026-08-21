@@ -27,6 +27,7 @@ import {
   upsertWatchItem,
 } from "@/lib/server/portfolio";
 import {
+  backfillFxHistory,
   backfillSnapshots,
   importBondSchedule,
 } from "@/lib/server/extra-actions";
@@ -55,6 +56,8 @@ function SettingsPage() {
   const [pending, setPending] = useState(false);
   const [snapshotCsv, setSnapshotCsv] = useState("");
   const [snapBusy, setSnapBusy] = useState(false);
+  const [fxCsv, setFxCsv] = useState("");
+  const [fxBusy, setFxBusy] = useState(false);
   const [schedCsv, setSchedCsv] = useState("");
   const [schedReplace, setSchedReplace] = useState(true);
   const [schedBusy, setSchedBusy] = useState(false);
@@ -879,6 +882,82 @@ function SettingsPage() {
               una fecha repetida pisa el valor anterior
             </span>
           </div>
+        </Monitor>
+
+        <Monitor title="HISTORIAL DE DÓLAR">
+          <p className="mb-2 font-mono text-[12px] text-muted">
+            Necesario para NW vs DÓLAR: el panel compara tu patrimonio contra la
+            evolución del tipo de cambio, y sin historial no tiene con qué.
+          </p>
+          <p className="mb-2 font-mono text-[11px] text-subtle">
+            {data.fxHistory.length} registro
+            {data.fxHistory.length === 1 ? "" : "s"}. Columnas:{" "}
+            <span className="text-fg">fecha,oficial,blue,mep</span>.
+          </p>
+          <Textarea
+            rows={5}
+            value={fxCsv}
+            onChange={(e) => setFxCsv(e.target.value)}
+            placeholder={"2026-01-31,1010,1180,1150\n2026-02-28,1035,1240,1205"}
+            className="mb-2"
+          />
+          <Button
+            type="button"
+            disabled={fxBusy || !fxCsv.trim()}
+            onClick={async () => {
+              const rows: {
+                date: string;
+                official: number;
+                blue: number;
+                mep: number;
+              }[] = [];
+              let bad = 0;
+              for (const raw of fxCsv.split(/\r?\n/)) {
+                const line = raw.trim();
+                if (!line || /^fecha|^date/i.test(line)) continue;
+                const [d, o, bl, mp] = line.split(/[,;\t]/);
+                const date = (d || "").trim();
+                const official = parseAmount(o);
+                const blue = parseAmount(bl);
+                const mep = parseAmount(mp);
+                if (
+                  !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+                  official === null ||
+                  blue === null ||
+                  mep === null ||
+                  official <= 0 ||
+                  blue <= 0 ||
+                  mep <= 0
+                ) {
+                  bad++;
+                  continue;
+                }
+                rows.push({ date, official, blue, mep });
+              }
+              if (rows.length === 0) {
+                toast.error(
+                  "Ninguna línea válida (formato: 2026-01-31,1010,1180,1150)",
+                );
+                return;
+              }
+              setFxBusy(true);
+              try {
+                const res = await backfillFxHistory({ data: { rows } });
+                await router.invalidate();
+                setFxCsv("");
+                toast.success(
+                  `${res.written} registro${res.written === 1 ? "" : "s"} de FX` +
+                    (bad ? ` · ${bad} línea(s) ignorada(s)` : ""),
+                );
+              } catch {
+                toast.error("No se pudo guardar el historial de FX");
+              } finally {
+                setFxBusy(false);
+              }
+            }}
+          >
+            {fxBusy ? "Guardando…" : "Cargar historial FX"}
+          </Button>
         </Monitor>
 
         <Monitor title="SCHEDULE DE BONOS">

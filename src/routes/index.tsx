@@ -1891,8 +1891,15 @@ function Dashboard() {
               ) : (
                 <div className="flex h-40 flex-col">
                   <div className="mb-1 flex flex-wrap gap-x-4 gap-y-0.5 font-mono text-[11px]">
-                    <span className={bench.nwChange >= 0 ? "text-gain" : "text-loss"}>
-                      NW {formatPct(bench.nwChange * 100)}
+                    <span className="text-fg">
+                      NW{" "}
+                      <span
+                        className={
+                          bench.nwChange >= 0 ? "text-gain" : "text-loss"
+                        }
+                      >
+                        {formatPct(bench.nwChange * 100)}
+                      </span>
                     </span>
                     <span className="text-cat-1">
                       BLUE {formatPct(bench.blueChange * 100)}
@@ -1931,8 +1938,8 @@ function Dashboard() {
                         <Line
                           type="monotone"
                           dataKey="nw"
-                          stroke="#00e676"
-                          strokeWidth={1.5}
+                          stroke="#f2f2f2"
+                          strokeWidth={2}
                           dot={false}
                         />
                         <Line

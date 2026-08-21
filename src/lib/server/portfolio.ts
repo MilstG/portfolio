@@ -608,17 +608,25 @@ export const updateFx = createServerFn({ method: "POST" })
     );
     try {
       const today = new Date().toISOString().slice(0, 10);
+      // `average` is NOT NULL with no default. Omitting it made every one of
+      // these inserts throw, and the empty catch below swallowed it — so
+      // fx_history never recorded a single row, and anything reading it (the
+      // FX chart, NW vs DÓLAR) was permanently empty.
+      const average = (data.official + data.blue + data.mep) / 3;
       await sql.query(
-        `insert into fx_history (date, official, blue, mep)
-         values ($1,$2,$3,$4)
+        `insert into fx_history (date, official, blue, mep, average)
+         values ($1,$2,$3,$4,$5)
          on conflict (date) do update set
            official = excluded.official,
            blue = excluded.blue,
-           mep = excluded.mep`,
-        [today, data.official, data.blue, data.mep],
+           mep = excluded.mep,
+           average = excluded.average`,
+        [today, data.official, data.blue, data.mep, average],
       );
-    } catch {
-      // fx_history optional
+    } catch (err) {
+      // Still non-fatal — updating the rate matters more than recording it —
+      // but no longer invisible.
+      console.error("[fx] no se pudo escribir fx_history:", err);
     }
     await writeTodaySnapshot();
     return { ok: true };

@@ -154,6 +154,64 @@ export const deleteSnapshot = createServerFn({ method: "POST" })
  * Ids are derived from ticker + date + leg, so re-importing a corrected file
  * updates the same rows rather than duplicating the schedule.
  */
+/**
+ * Bulk-load historical FX.
+ *
+ * Companion to backfillSnapshots: NW vs DÓLAR needs both series to overlap, and
+ * fx_history only ever grows one row per day going forward.
+ */
+export const backfillFxHistory = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
+  .validator(
+    z.object({
+      rows: z
+        .array(
+          z.object({
+            date: z.string().regex(/^\d{4}-\d{2}-\d{2}/),
+            official: z.number().finite().positive(),
+            blue: z.number().finite().positive(),
+            mep: z.number().finite().positive(),
+          }),
+        )
+        .max(5000),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const sql = await getSql();
+    // Later rows win on a duplicate date, matching the on-conflict below.
+    const byDate = new Map<
+      string,
+      { official: number; blue: number; mep: number }
+    >();
+    for (const r of data.rows) {
+      byDate.set(r.date.slice(0, 10), {
+        official: r.official,
+        blue: r.blue,
+        mep: r.mep,
+      });
+    }
+    const rows = [...byDate.entries()];
+    if (rows.length === 0) return { written: 0 };
+
+    await sql.query(
+      `insert into fx_history (date, official, blue, mep, average)
+       select * from unnest($1::date[], $2::numeric[], $3::numeric[], $4::numeric[], $5::numeric[])
+       on conflict (date) do update set
+         official = excluded.official,
+         blue = excluded.blue,
+         mep = excluded.mep,
+         average = excluded.average`,
+      [
+        rows.map((r) => r[0]),
+        rows.map((r) => r[1].official),
+        rows.map((r) => r[1].blue),
+        rows.map((r) => r[1].mep),
+        rows.map((r) => (r[1].official + r[1].blue + r[1].mep) / 3),
+      ],
+    );
+    return { written: rows.length };
+  });
+
 export const importBondSchedule = createServerFn({ method: "POST" })
   .middleware([requireAuth])
   .validator(
