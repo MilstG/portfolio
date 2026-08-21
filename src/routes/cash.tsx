@@ -4,6 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { AccountForm } from "@/components/account-form";
 import { ConfirmDelete } from "@/components/confirm-delete";
+import { Pager, usePager } from "@/components/pager";
 import { Button } from "@/components/ui/button";
 import { deleteAccount, getPortfolio, upsertAccount } from "@/lib/server/portfolio";
 import type { Account } from "@/lib/types";
@@ -21,6 +22,7 @@ function CashPage() {
   const [deleting, setDeleting] = useState<Account | null>(null);
   const [pending, setPending] = useState(false);
   const total = data.accounts.reduce((s, a) => s + toUsd(a.balance, a.currency, data.fx.average), 0);
+  const pager = usePager(data.accounts, 10);
 
   return (
     <div>
@@ -38,7 +40,7 @@ function CashPage() {
       </div>
 
       <ul className="mt-8 space-y-3">
-        {data.accounts.map((a) => {
+        {pager.slice.map((a) => {
           const usd = toUsd(a.balance, a.currency, data.fx.average);
           const type = ACCOUNT_TYPES.find((t) => t.value === a.type)?.label ?? a.type;
           return (
@@ -73,7 +75,17 @@ function CashPage() {
       </ul>
       {data.accounts.length === 0 ? (
         <p className="mt-16 text-center text-sm text-muted">No hay cuentas. Agregá una y queda en la base.</p>
-      ) : null}
+      ) : (
+        <Pager
+          page={pager.page}
+          totalPages={pager.totalPages}
+          total={pager.total}
+          from={pager.from}
+          to={pager.to}
+          onChange={pager.setPage}
+          className="mt-2"
+        />
+      )}
 
       {editing !== null ? (
         <AccountForm
@@ -82,11 +94,16 @@ function CashPage() {
           initial={editing === "new" ? null : editing}
           pending={pending}
           onClose={() => setEditing(null)}
-          onSubmit={async (payload) => {
+          onSubmit={async (values) => {
             setPending(true);
             try {
-              await upsertAccount({ data: payload });
-              toast.success("Cuenta guardada");
+              await upsertAccount({
+                data: {
+                  id: editing === "new" ? undefined : editing.id,
+                  ...values,
+                },
+              });
+              toast.success(editing === "new" ? "Cuenta creada" : "Cuenta actualizada");
               setEditing(null);
               await router.invalidate();
             } catch (e) {
@@ -101,7 +118,7 @@ function CashPage() {
       <ConfirmDelete
         open={!!deleting}
         title="Eliminar cuenta"
-        body={deleting ? `Se borra “${deleting.name}” de la base.` : ""}
+        description={deleting ? `¿Borrar ${deleting.name}?` : ""}
         pending={pending}
         onClose={() => setDeleting(null)}
         onConfirm={async () => {
@@ -109,9 +126,11 @@ function CashPage() {
           setPending(true);
           try {
             await deleteAccount({ data: { id: deleting.id } });
-            toast.success("Eliminada");
+            toast.success("Eliminado");
             setDeleting(null);
             await router.invalidate();
+          } catch (e) {
+            toast.error(e instanceof Error ? e.message : "No se pudo eliminar");
           } finally {
             setPending(false);
           }
