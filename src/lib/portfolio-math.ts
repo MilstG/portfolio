@@ -220,11 +220,14 @@ export const INCOME_KIND_META: Record<
   IncomeKind,
   { label: string; color: string }
 > = {
-  COUPON: { label: "Cupón", color: "#ff6d00" },
-  RENT: { label: "Alquiler", color: "#22c55e" },
-  DIVIDEND: { label: "Dividendo", color: "#3b82f6" },
-  AMORT: { label: "Amortización", color: "#a855f7" },
-  OTHER: { label: "Otros", color: "#eab308" },
+  // Categorical ramp (--color-cat-* in styles.css). These were the brand orange
+  // and the P&L green, which made an income category look like an action or a
+  // gain; a colour must mean one thing.
+  COUPON: { label: "Cupón", color: "#4aa3ff" },
+  RENT: { label: "Alquiler", color: "#2dd4bf" },
+  DIVIDEND: { label: "Dividendo", color: "#a78bfa" },
+  AMORT: { label: "Amortización", color: "#f472b6" },
+  OTHER: { label: "Otros", color: "#94a3b8" },
 };
 
 export const INCOME_KINDS: IncomeKind[] = [

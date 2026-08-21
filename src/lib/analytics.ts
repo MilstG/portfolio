@@ -15,6 +15,7 @@ import {
   rankedHoldings,
   netWorthUsd,
   allocationBuckets,
+  monthlyProjectionStacked,
 } from "@/lib/portfolio-math";
 
 /** Coupons grouped by ticker over projected events. */
@@ -354,6 +355,7 @@ export function computeAnalytics(p: Portfolio) {
     coupons: couponsByTicker(events12),
     amorts: upcomingAmort(events, 20),
     calendar: paymentCalendar(events, 24),
+    calendarStacked: monthlyProjectionStacked(events, 24),
     bondYields: bondYields(p.assets, events12, fxAvg),
     incomeExpense: incomeExpenseSeries(p.transactions, fxAvg, 12),
     allocTarget: allocVsTarget(p.assets, p.accounts, p.allocTargets, fxAvg),

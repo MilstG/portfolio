@@ -10,6 +10,7 @@ import {
   LineChart,
   Pie,
   PieChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -29,6 +30,7 @@ import { computeBenchmark } from "@/lib/benchmark";
 import {
   computeDashboard,
   INCOME_KIND_META,
+  INCOME_KINDS,
   type IncomeKind,
 } from "@/lib/portfolio-math";
 import { formatUsd, formatPct, toUsd } from "@/lib/utils";
@@ -58,6 +60,64 @@ const CHART_TIP = {
   fontFamily: "IBM Plex Mono",
   padding: "6px 8px",
 };
+
+/**
+ * Axis ticks: $1.4k / $18k / $1.4M, so a y-axis fits in 44px.
+ *
+ * Keeps a decimal below $10k — recharts picks ticks like 1400/2100/2800, and
+ * rounding those to $1k/$2k/$3k drew a scale that did not match the data.
+ */
+function compactUsd(v: number): string {
+  const abs = Math.abs(v);
+  if (abs >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
+  if (abs >= 10_000) return `$${Math.round(v / 1_000)}k`;
+  if (abs >= 1_000) return `$${(v / 1_000).toFixed(1)}k`;
+  return `$${Math.round(v)}`;
+}
+
+type CalendarRow = {
+  label: string;
+  total: number;
+} & Partial<Record<IncomeKind, number>>;
+
+/** Month breakdown by income kind — a merged total hid what the money was. */
+function CalendarTip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: { payload?: CalendarRow }[];
+  label?: string | number;
+}) {
+  const row = payload?.[0]?.payload;
+  if (!active || !row) return null;
+  const parts = INCOME_KINDS.filter((k) => (row[k] ?? 0) > 0);
+  return (
+    <div className="z-[100] max-w-xs border border-accent bg-black px-2 py-1.5 font-mono text-[12px] leading-snug text-fg">
+      <p className="mb-1 border-b border-line pb-1 text-accent">{label}</p>
+      {parts.map((k) => (
+        <div key={k} className="flex justify-between gap-4">
+          <span className="inline-flex items-center gap-1 text-subtle">
+            <span
+              className="inline-block size-2"
+              style={{ background: INCOME_KIND_META[k].color }}
+            />
+            {INCOME_KIND_META[k].label}
+          </span>
+          <span className="tabular-nums">{formatUsd(row[k] ?? 0)}</span>
+        </div>
+      ))}
+      <div className="mt-1 flex justify-between gap-4 border-t border-line pt-1">
+        <span className="text-subtle">TOTAL</span>
+        <span className="tabular-nums text-gain">{formatUsd(row.total)}</span>
+      </div>
+      {parts.length === 0 ? (
+        <p className="text-subtle">sin pagos este mes</p>
+      ) : null}
+    </div>
+  );
+}
 
 function Dashboard() {
   const data = Route.useLoaderData();
@@ -219,6 +279,19 @@ function Dashboard() {
       );
     };
   }, [data.assets, data.transactions, data.fx.average, s.holdings, ret.perAsset, bonds]);
+
+  const calendarKinds = useMemo(
+    () => INCOME_KINDS.filter((k) => a.calendarStacked.some((r) => r[k] > 0)),
+    [a.calendarStacked],
+  );
+  const calendarStats = useMemo(() => {
+    const rows = a.calendarStacked;
+    const total = rows.reduce((sum, r) => sum + r.total, 0);
+    if (total <= 0) return null;
+    const peak = rows.reduce((best, r) => (r.total > best.total ? r : best));
+    const payments = a.calendar.reduce((sum, c) => sum + c.count, 0);
+    return { total, avg: total / rows.length, peak, payments };
+  }, [a.calendarStacked, a.calendar]);
 
   const holdingsPager = usePager(s.holdings, 10);
   const couponsPager = usePager(a.coupons, 10);
@@ -875,46 +948,112 @@ function Dashboard() {
             <Monitor
               title="PAY CALENDAR 24M"
               action={
-                <HelpTip content="Calendario de pagos proyectados (cupones + alquileres + amort) mes a mes a 24 meses." />
+                <HelpTip content="Pagos proyectados mes a mes a 24 meses, apilados por tipo. Incluye recurrentes (alquileres) y el schedule fechado de los bonos." />
               }
             >
-              <div className="h-40">
-                {a.calendar.some((c) => c.total > 0) ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={a.calendar}
-                      margin={{ top: 4, right: 4, left: 0, bottom: 0 }}
-                    >
-                      <XAxis
-                        dataKey="label"
-                        tick={{
-                          fill: "#6b7280",
-                          fontSize: 9,
-                          fontFamily: "IBM Plex Mono",
-                        }}
-                        axisLine={false}
-                        tickLine={false}
-                        interval={2}
-                      />
-                      <YAxis hide />
-                      <Tooltip
-                        contentStyle={CHART_TIP}
-                        formatter={(
-                          v: number,
-                          _n: string,
-                          p: { payload?: { count?: number } },
-                        ) => [
-                          `${formatUsd(v)} · ${p?.payload?.count ?? 0} pagos`,
-                          "Total",
-                        ]}
-                      />
-                      <Bar dataKey="total" fill="#4aa3ff" fillOpacity={0.85} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <p className="font-mono text-xs text-muted">sin calendario</p>
-                )}
-              </div>
+              {calendarStats === null ? (
+                <p className="font-mono text-xs text-muted">sin calendario</p>
+              ) : (
+                <div className="flex h-56 flex-col">
+                  <div className="mb-1 flex flex-wrap items-baseline gap-x-4 gap-y-0.5 font-mono text-[11px]">
+                    <span className="text-muted">
+                      total{" "}
+                      <span className="tabular-nums text-gain">
+                        {formatUsd(calendarStats.total)}
+                      </span>
+                    </span>
+                    <span className="text-muted">
+                      prom/mes{" "}
+                      <span className="tabular-nums text-fg">
+                        {formatUsd(calendarStats.avg)}
+                      </span>
+                    </span>
+                    <span className="text-muted">
+                      pico{" "}
+                      <span className="tabular-nums text-fg">
+                        {calendarStats.peak.label} ·{" "}
+                        {formatUsd(calendarStats.peak.total)}
+                      </span>
+                    </span>
+                    <span className="text-subtle">
+                      {calendarStats.payments} pagos
+                    </span>
+                  </div>
+
+                  <div className="min-h-0 flex-1">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={a.calendarStacked}
+                        margin={{ top: 4, right: 4, left: 0, bottom: 0 }}
+                      >
+                        <XAxis
+                          dataKey="label"
+                          tick={{
+                            fill: "#6b7280",
+                            fontSize: 9,
+                            fontFamily: "IBM Plex Mono",
+                          }}
+                          axisLine={false}
+                          tickLine={false}
+                          interval={1}
+                        />
+                        {/* The bars were unreadable without a scale: a $200
+                            month and a $2,000 month looked the same shape. */}
+                        <YAxis
+                          width={44}
+                          tick={{
+                            fill: "#6b7280",
+                            fontSize: 9,
+                            fontFamily: "IBM Plex Mono",
+                          }}
+                          axisLine={false}
+                          tickLine={false}
+                          tickFormatter={compactUsd}
+                        />
+                        <ReferenceLine
+                          y={calendarStats.avg}
+                          stroke="#3a3a3a"
+                          strokeDasharray="3 3"
+                        />
+                        <Tooltip
+                          contentStyle={CHART_TIP}
+                          cursor={{ fill: "#ffffff10" }}
+                          content={<CalendarTip />}
+                        />
+                        {calendarKinds.map((k, i) => (
+                          <Bar
+                            key={k}
+                            dataKey={k}
+                            stackId="pay"
+                            fill={INCOME_KIND_META[k].color}
+                            fillOpacity={0.9}
+                            radius={
+                              i === calendarKinds.length - 1
+                                ? [1, 1, 0, 0]
+                                : undefined
+                            }
+                          />
+                        ))}
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[10px]">
+                    {calendarKinds.map((k) => (
+                      <span
+                        key={k}
+                        className="inline-flex items-center gap-1 text-muted"
+                      >
+                        <span
+                          className="inline-block size-2"
+                          style={{ background: INCOME_KIND_META[k].color }}
+                        />
+                        {INCOME_KIND_META[k].label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </Monitor>
           ),
 
