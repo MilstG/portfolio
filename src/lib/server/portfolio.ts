@@ -842,7 +842,17 @@ export async function runPriceRefresh() {
             : // STOCK: the US quote is authoritative when it exists.
               (stocks[ticker] ?? cedears[ticker]);
       if (unit != null && unit > 0) {
-        value = qty != null && qty > 0 ? unit * qty : unit;
+        if (qty != null && qty > 0) {
+          value = unit * qty;
+        } else {
+          // These instruments are priced per unit, so without a quantity there
+          // is no position value to compute. Writing the unit price into a
+          // position-level column produced a holding worth $496 against an
+          // $80,000 cost — a plausible-looking number that was simply the wrong
+          // quantity of thing.
+          unpriced.push(`${label} (${ticker}) — falta cantidad`);
+          continue;
+        }
       }
     }
 

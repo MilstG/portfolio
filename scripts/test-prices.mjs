@@ -114,6 +114,31 @@ try {
   check(r.unpriced.length === 0, "ningún activo queda sin precio", `-> ${JSON.stringify(r.unpriced)}`);
   check(r.fx === true, "FX actualizado");
 
+  // Sin cantidad no hay valor de posicion que calcular: escribir el precio
+  // unitario daba una tenencia de $496 contra un costo de $80.000.
+  await sql.query(
+    `insert into assets (id, name, ticker, type, quantity, cost_basis, current_value, currency)
+     values ('t-noqty','CEDEAR Sin Cantidad','BRKB','CEDEAR',null,80000,0,'USD')
+     on conflict (id) do nothing`,
+  );
+  installFetchStub([
+    ["arg_cedears", [{ symbol: "BRKB", c: 35250 }]],
+    ["dolarapi.com", [
+      { casa: "oficial", venta: 1000 },
+      { casa: "blue", venta: 1500 },
+      { casa: "bolsa", venta: 1410 },
+    ]],
+  ]);
+  const r3 = await runPriceRefresh();
+  const rows3 = await sql.query(`select current_value from assets where id = 't-noqty'`);
+  check(
+    Number(rows3[0]?.current_value ?? -1) === 0 &&
+      r3.unpriced.some((u) => u.includes("falta cantidad")),
+    "sin cantidad no escribe el precio unitario",
+    `-> valor ${rows3[0]?.current_value}, reporte ${JSON.stringify(r3.unpriced.filter((u) => u.includes("cantidad")))}`,
+  );
+  await sql.query(`delete from assets where id = 't-noqty'`);
+
   // A token nobody can price must be reported, not silently zeroed.
   await sql.query(`update assets set current_value = 0 where id = 't-gp'`);
   await sql.query(`update assets set price_id = 'solana:NOPE' where id = 't-gp'`);
