@@ -1,3 +1,4 @@
+import { projectCashflow } from "@/lib/portfolio-math";
 import type { Asset, Portfolio, Tx } from "@/lib/types";
 import { toUsd } from "@/lib/utils";
 
@@ -90,6 +91,14 @@ export type AssetReturn = {
   costUsd: number;
   valueUsd: number;
   incomeUsd: number;
+  /**
+   * Scheduled income over the next twelve months.
+   *
+   * A book bought last month has collected nothing yet, so `incomeUsd` is zero
+   * across the board and the column reads as if nothing pays anything. This is
+   * what the position is contracted to pay, which is the question being asked.
+   */
+  projectedIncomeUsd: number;
   /** Annualised money-weighted return. Null when the asset has no purchase
    *  date, or when it is too recently held to annualise (see tooShort). */
   annualised: number | null;
@@ -107,6 +116,8 @@ export function assetReturns(
   transactions: Tx[],
   fxAvg: number,
   today = new Date().toISOString().slice(0, 10),
+  /** Projected income per asset id, from the caller that has the recurring rules. */
+  projectedByAsset: Map<string, number> = new Map(),
 ): AssetReturn[] {
   const income = realisedIncome(transactions, today, fxAvg);
   const byAsset = new Map<string, Tx[]>();
@@ -150,6 +161,7 @@ export function assetReturns(
       costUsd,
       valueUsd,
       incomeUsd,
+      projectedIncomeUsd: projectedByAsset.get(a.id) ?? 0,
       annualised,
       holdingYears,
       tooShort,
@@ -195,7 +207,25 @@ export function portfolioReturn(
   today = new Date().toISOString().slice(0, 10),
 ): PortfolioReturn {
   const fxAvg = p.fx.average;
-  const per = assetReturns(p.assets, p.transactions, fxAvg, today);
+
+  // Contracted income for the year ahead, by asset — coupons and amortizations
+  // from the dated schedule plus the recurring rules, deduplicated.
+  const projectedByAsset = new Map<string, number>();
+  for (const e of projectCashflow(p.recurring, p.transactions, fxAvg, 12)) {
+    if (!e.assetId) continue;
+    projectedByAsset.set(
+      e.assetId,
+      (projectedByAsset.get(e.assetId) ?? 0) + e.amountUsd,
+    );
+  }
+
+  const per = assetReturns(
+    p.assets,
+    p.transactions,
+    fxAvg,
+    today,
+    projectedByAsset,
+  );
   const dated = per.filter((r) => r.holdingYears !== null && r.costUsd > 0);
 
   const flows: CashFlow[] = [];

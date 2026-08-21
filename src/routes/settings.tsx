@@ -28,6 +28,7 @@ import {
 } from "@/lib/server/portfolio";
 import {
   backfillFxHistory,
+  backfillPurchaseDates,
   backfillSnapshots,
   importBondSchedule,
 } from "@/lib/server/extra-actions";
@@ -58,6 +59,8 @@ function SettingsPage() {
   const [snapBusy, setSnapBusy] = useState(false);
   const [fxCsv, setFxCsv] = useState("");
   const [fxBusy, setFxBusy] = useState(false);
+  const [datesCsv, setDatesCsv] = useState("");
+  const [datesBusy, setDatesBusy] = useState(false);
   const [schedCsv, setSchedCsv] = useState("");
   const [schedReplace, setSchedReplace] = useState(true);
   const [schedBusy, setSchedBusy] = useState(false);
@@ -957,6 +960,84 @@ function SettingsPage() {
             }}
           >
             {fxBusy ? "Guardando…" : "Cargar historial FX"}
+          </Button>
+        </Monitor>
+
+        <Monitor title="FECHAS DE COMPRA">
+          <p className="mb-2 font-mono text-[12px] text-muted">
+            La fecha de compra es lo que hace que una posición entre en el
+            retorno anualizado. Sin ella queda afuera; con una equivocada, la
+            tasa se calcula sobre la ventana equivocada.
+          </p>
+          <p className="mb-2 font-mono text-[11px] text-subtle">
+            Una línea por posición:{" "}
+            <span className="text-fg">ticker,fecha[,costo]</span>. El costo es
+            opcional; si lo omitís queda el que ya tenías.
+          </p>
+          <Textarea
+            rows={5}
+            value={datesCsv}
+            onChange={(e) => setDatesCsv(e.target.value)}
+            placeholder={"IRCPO,2025-03-14,18117\nGYC5O,2025-06-02"}
+            className="mb-2"
+          />
+          <Button
+            type="button"
+            disabled={datesBusy || !datesCsv.trim()}
+            onClick={async () => {
+              const rows: {
+                ticker: string;
+                purchaseDate: string;
+                costBasis?: number;
+              }[] = [];
+              let bad = 0;
+              for (const raw of datesCsv.split(/\r?\n/)) {
+                const line = raw.trim();
+                if (!line || /^ticker/i.test(line)) continue;
+                const [ticker, date, cost] = line
+                  .split(/[,;\t]/)
+                  .map((x) => x.trim());
+                if (!ticker || !/^\d{4}-\d{2}-\d{2}$/.test(date || "")) {
+                  bad++;
+                  continue;
+                }
+                const c = cost ? parseAmount(cost) : null;
+                rows.push({
+                  ticker,
+                  purchaseDate: date,
+                  ...(c !== null && c > 0 ? { costBasis: c } : {}),
+                });
+              }
+              if (rows.length === 0) {
+                toast.error("Ninguna línea válida (formato: IRCPO,2025-03-14)");
+                return;
+              }
+              setDatesBusy(true);
+              try {
+                const res = await backfillPurchaseDates({ data: { rows } });
+                await router.invalidate();
+                if (res.updated === 0) {
+                  toast.error(
+                    `Ningún ticker coincide${res.unknown.length ? `: ${res.unknown.join(", ")}` : ""}`,
+                  );
+                } else {
+                  setDatesCsv("");
+                  toast.success(
+                    `${res.updated} posición(es) actualizada(s)` +
+                      (bad ? ` · ${bad} línea(s) ignorada(s)` : "") +
+                      (res.unknown.length
+                        ? ` · sin activo: ${res.unknown.join(", ")}`
+                        : ""),
+                  );
+                }
+              } catch {
+                toast.error("No se pudieron guardar las fechas");
+              } finally {
+                setDatesBusy(false);
+              }
+            }}
+          >
+            {datesBusy ? "Guardando…" : "Cargar fechas"}
           </Button>
         </Monitor>
 

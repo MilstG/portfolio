@@ -74,6 +74,33 @@ isNull(xirr([]), 'vacio');
   if (!largo.annualisedLeads) fail++;
 }
 
+// ---- ingresos proyectados ----
+// Un libro comprado el mes pasado no cobro nada todavia, asi que la columna
+// mostraba guiones aunque cada bono tenga su schedule de cupones.
+{
+  const { portfolioReturn } = await server.ssrLoadModule('/src/lib/returns.ts');
+  const tx = (id, assetId, date, amount, type) => ({ id, date, description:'Cupón X',
+    amount, currency:'USD', type, category:null, assetId, accountId:null });
+  const p = {
+    assets: [{ id:'b1', name:'ON X', ticker:'X', type:'BOND', quantity:10000,
+      costBasis:9000, currentValue:10000, currency:'USD', purchaseDate:'2026-08-01',
+      notes:null, priceId:null, unpriced:false }],
+    accounts:[], recurring:[],
+    // dos dentro de la ventana de 12 meses y uno fuera, para fijar el borde
+    transactions:[ tx('c1','b1','2026-12-01',400,'COUPON'),
+                   tx('c2','b1','2027-06-01',400,'COUPON'),
+                   tx('c3','b1','2029-01-01',9999,'COUPON') ],
+    snapshots:[], fx:{official:1,blue:1,mep:1,average:1}, liabilities:[], goals:[],
+    allocTargets:[], fxHistory:[], settings:{pinEnabled:false,hasPin:false},
+    taxLots:[], watchlist:[], lastPriceRun:null,
+  };
+  const r = portfolioReturn(p, '2026-08-21');
+  const row = r.perAsset[0];
+  near(row.incomeUsd, 0, 1e-9, 'sin cobrar todavia: ingreso cobrado 0');
+  // los dos cupones dentro de 12 meses; el de 2029 queda afuera
+  near(row.projectedIncomeUsd, 800, 1e-9, 'proyectado 12m suma solo la ventana');
+}
+
 // ---- bondMetrics ----
 const { bondMetrics } = await server.ssrLoadModule('/src/lib/bonds.ts');
 const asset = (id, value) => ({ id, name:id, ticker:id, type:'BOND', quantity:1,

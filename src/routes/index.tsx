@@ -1845,7 +1845,13 @@ function Dashboard() {
                     ) : null}
                     {ret.uncoveredValueUsd > 0 ? (
                       <p className="font-mono text-[11px] text-subtle">
-                        sin fecha: {formatUsd(ret.uncoveredValueUsd)}
+                        {formatUsd(ret.uncoveredValueUsd)} fuera del cálculo:{" "}
+                        <Link
+                          to="/assets"
+                          className="text-accent underline decoration-dotted underline-offset-2"
+                        >
+                          sin fecha de compra
+                        </Link>
                       </p>
                     ) : null}
                   </div>
@@ -1859,7 +1865,7 @@ function Dashboard() {
                             AÑOS
                           </th>
                           <th className="hidden py-1 pr-2 text-right sm:table-cell">
-                            INGRESOS
+                            INGRESOS 12M
                           </th>
                           <th className="py-1 text-right">ANUAL</th>
                         </tr>
@@ -1882,8 +1888,24 @@ function Dashboard() {
                                 ? "—"
                                 : r.holdingYears.toFixed(1)}
                             </td>
-                            <td className="hidden py-1 pr-2 text-right tabular-nums text-muted sm:table-cell">
-                              {r.incomeUsd > 0 ? formatUsd(r.incomeUsd) : "—"}
+                            {/* Cobrado cuando lo hay; si no, lo contratado para
+                                los próximos 12 meses, marcado con ~ para no
+                                hacerlo pasar por dinero recibido. */}
+                            <td className="hidden py-1 pr-2 text-right tabular-nums sm:table-cell">
+                              {r.incomeUsd > 0 ? (
+                                <span className="text-gain">
+                                  {formatUsd(r.incomeUsd)}
+                                </span>
+                              ) : r.projectedIncomeUsd > 0 ? (
+                                <span
+                                  className="text-subtle"
+                                  title="Proyectado a 12 meses — todavía no cobrado"
+                                >
+                                  ~{formatUsd(r.projectedIncomeUsd)}
+                                </span>
+                              ) : (
+                                <span className="text-subtle">—</span>
+                              )}
                             </td>
                             <td
                               className={`py-1 text-right tabular-nums ${

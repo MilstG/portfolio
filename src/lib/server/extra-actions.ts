@@ -212,6 +212,67 @@ export const backfillFxHistory = createServerFn({ method: "POST" })
     return { written: rows.length };
   });
 
+/**
+ * Bulk-set purchase dates (and optionally cost) by ticker.
+ *
+ * Purchase date is what makes a position count toward the annualised return:
+ * without one it is excluded, and with a wrong one the whole rate is computed
+ * over the wrong window. The ON import seeded every bond with the same date,
+ * which is not when they were bought.
+ */
+export const backfillPurchaseDates = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
+  .validator(
+    z.object({
+      rows: z
+        .array(
+          z.object({
+            ticker: z.string().trim().min(1).max(32),
+            purchaseDate: z.string().regex(/^\d{4}-\d{2}-\d{2}/),
+            costBasis: z.number().finite().positive().optional(),
+          }),
+        )
+        .max(2000),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const sql = await getSql();
+    const existing = await sql.query<{ id: string; ticker: string | null }>(
+      `select id, ticker from assets where ticker is not null`,
+    );
+    const byTicker = new Map<string, string>();
+    for (const a of existing) {
+      if (a.ticker) byTicker.set(a.ticker.trim().toUpperCase(), a.id);
+    }
+
+    const ids: string[] = [];
+    const dates: string[] = [];
+    const costs: (number | null)[] = [];
+    const unknown: string[] = [];
+    for (const r of data.rows) {
+      const id = byTicker.get(r.ticker.trim().toUpperCase());
+      if (!id) {
+        unknown.push(r.ticker.trim().toUpperCase());
+        continue;
+      }
+      ids.push(id);
+      dates.push(r.purchaseDate.slice(0, 10));
+      costs.push(r.costBasis ?? null);
+    }
+    if (ids.length === 0) return { updated: 0, unknown: [...new Set(unknown)] };
+
+    await sql.query(
+      `update assets a
+       set purchase_date = v.date,
+           cost_basis = coalesce(v.cost, a.cost_basis),
+           updated_at = now()
+       from unnest($1::text[], $2::date[], $3::numeric[]) as v(id, date, cost)
+       where a.id = v.id`,
+      [ids, dates, costs],
+    );
+    return { updated: ids.length, unknown: [...new Set(unknown)] };
+  });
+
 export const importBondSchedule = createServerFn({ method: "POST" })
   .middleware([requireAuth])
   .validator(
