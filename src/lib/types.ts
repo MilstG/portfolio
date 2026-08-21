@@ -9,6 +9,12 @@ export type Asset = {
   currency: string;
   purchaseDate: string | null;
   notes: string | null;
+  /**
+   * True when this asset should carry a live quote but none could be fetched.
+   * `currentValue` then falls back to cost basis — an unknown price must not
+   * enter net worth, weights and allocation as a confident zero.
+   */
+  unpriced: boolean;
 };
 
 export type Account = {

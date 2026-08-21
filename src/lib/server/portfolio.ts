@@ -6,6 +6,7 @@ import { netWorthUsd } from "@/lib/portfolio-math";
 import { ASSET_TYPES, CURRENCIES, FREQUENCIES, TX_TYPES } from "@/lib/utils";
 import {
   fetchArgBondFactors,
+  fetchCedearUsd,
   fetchCryptoUsd,
   fetchDolarRates,
   fetchStockUsd,
@@ -38,19 +39,33 @@ export {
 } from "@/lib/server/extra-actions";
 import { num } from "@/lib/utils";
 
+/** Types that are supposed to get a quote from an upstream feed. */
+const PRICED_TYPES = new Set(["CRYPTO", "STOCK", "BOND", "CEDEAR"]);
+
 function mapAsset(r: Record<string, unknown>): Asset {
+  const type = String(r.type);
+  const costBasis = num(r.cost_basis);
+  const stored = num(r.current_value);
+
+  // A quote we could not fetch is not a value of zero. Zero would flow into net
+  // worth, allocation, weights, concentration and P&L as if the position had
+  // become worthless, silently understating the book; cost basis is the honest
+  // stand-in until a real price arrives.
+  const unpriced = PRICED_TYPES.has(type) && stored <= 0 && costBasis > 0;
+
   return {
     id: String(r.id),
     name: String(r.name),
     ticker: r.ticker == null ? null : String(r.ticker),
-    type: String(r.type),
+    type,
     quantity: r.quantity == null ? null : num(r.quantity),
-    costBasis: num(r.cost_basis),
-    currentValue: num(r.current_value),
+    costBasis,
+    currentValue: unpriced ? costBasis : stored,
     currency: String(r.currency),
     purchaseDate:
       r.purchase_date == null ? null : String(r.purchase_date).slice(0, 10),
     notes: r.notes == null ? null : String(r.notes),
+    unpriced,
   };
 }
 
@@ -725,6 +740,19 @@ export const lastPriceRun = () => readMeta(PRICE_OK_KEY);
  * where there is no request to authorise — the manual action keeps the auth
  * middleware.
  */
+/** Stored MEP, for when the FX feed is unreachable but CEDEARs still need one. */
+async function currentMep(sql: Awaited<ReturnType<typeof getSql>>) {
+  try {
+    const rows = await sql.query<{ mep: unknown }>(
+      `select mep from fx_rates where id = 1`,
+    );
+    const mep = rows[0]?.mep == null ? 0 : num(rows[0].mep);
+    return mep > 0 ? mep : 0;
+  } catch {
+    return 0;
+  }
+}
+
 export async function runPriceRefresh() {
   const sql = await getSql();
   const assets =
@@ -738,41 +766,72 @@ export async function runPriceRefresh() {
   const bondTickers = assets
     .filter((a) => String(a.type) === "BOND" && a.ticker)
     .map((a) => String(a.ticker).toUpperCase());
+  const cedearTickers = assets
+    .filter((a) => String(a.type) === "CEDEAR" && a.ticker)
+    .map((a) => String(a.ticker).toUpperCase());
 
-  const [crypto, stocks, bondFactors, fx] = await Promise.all([
+  // FX first: CEDEARs quote in pesos, so their USD price depends on MEP.
+  const fx = await fetchDolarRates();
+  const mepRate = fx?.mep ?? (await currentMep(sql));
+
+  const [crypto, stocks, bondFactors, cedears] = await Promise.all([
     fetchCryptoUsd(cryptoTickers),
     fetchStockUsd(stockTickers),
     fetchArgBondFactors(bondTickers),
-    fetchDolarRates(),
+    fetchCedearUsd(cedearTickers, mepRate),
   ]);
 
   const ids: string[] = [];
   const values: number[] = [];
+  /** Priced assets that need a quote but did not get one, by name. */
+  const unpriced: string[] = [];
+
   for (const a of assets) {
+    const type = String(a.type);
+    const tracked =
+      type === "CRYPTO" ||
+      type === "STOCK" ||
+      type === "BOND" ||
+      type === "CEDEAR";
+    if (!tracked) continue;
+
     const ticker = a.ticker ? String(a.ticker).toUpperCase() : null;
-    if (!ticker) continue;
-    const qty = a.quantity == null ? null : num(a.quantity);
-    let unit: number | undefined;
-    if (String(a.type) === "CRYPTO") unit = crypto[ticker];
-    if (String(a.type) === "STOCK") unit = stocks[ticker];
-    // Bond quotes are a factor of face value, so the position is worth
-    // nominal x factor. Without a nominal there is nothing to scale.
-    if (String(a.type) === "BOND") {
-      const factor = bondFactors[ticker];
-      if (factor != null && qty != null && qty > 0) {
-        ids.push(String(a.id));
-        values.push(qty * factor);
-      }
+    const label = String(a.name ?? a.ticker ?? a.id);
+    if (!ticker) {
+      unpriced.push(`${label} (sin ticker)`);
       continue;
     }
-    if (unit == null || unit <= 0) continue;
+    const qty = a.quantity == null ? null : num(a.quantity);
+
+    let value: number | null = null;
+    if (type === "BOND") {
+      // Bond quotes are a factor of face value, so the position is worth
+      // nominal x factor. Without a nominal there is nothing to scale.
+      const factor = bondFactors[ticker];
+      if (factor != null && qty != null && qty > 0) value = qty * factor;
+    } else {
+      const unit =
+        type === "CRYPTO"
+          ? crypto[ticker]
+          : type === "CEDEAR"
+            ? cedears[ticker]
+            : stocks[ticker];
+      if (unit != null && unit > 0) {
+        value = qty != null && qty > 0 ? unit * qty : unit;
+      }
+    }
+
+    if (value == null) {
+      unpriced.push(`${label} (${ticker})`);
+      continue;
+    }
     ids.push(String(a.id));
-    values.push(qty != null && qty > 0 ? unit * qty : unit);
+    values.push(value);
   }
   const updated = ids.length;
   if (updated > 0) {
     await sql.query(
-      `update assets a set current_value = v.value, updated_at = now()
+      `update assets a set current_value = v.value, price_status = 'LIVE', updated_at = now()
        from unnest($1::text[], $2::numeric[]) as v(id, value)
       where a.id = v.id`,
       [ids, values],
@@ -820,7 +879,12 @@ export async function runPriceRefresh() {
     stocksWanted: new Set(stockTickers).size,
     bonds: Object.keys(bondFactors).length,
     bondsWanted: new Set(bondTickers).size,
+    cedears: Object.keys(cedears).length,
+    cedearsWanted: new Set(cedearTickers).size,
     fx: fx != null,
+    // Named, not just counted: an asset silently stuck at zero is the whole
+    // failure mode this exists to surface.
+    unpriced,
   };
 }
 

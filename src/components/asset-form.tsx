@@ -69,7 +69,9 @@ export function AssetForm({
             type,
             quantity: quantity === "" ? 1 : Number(quantity),
             costBasis: Number(costBasis) || 0,
-            currentValue: Number(currentValue) || 0,
+            // Blank means "fetch it": storing 0 would make the position look
+            // worthless everywhere until a quote arrives.
+            currentValue: currentValue.trim() === "" ? 0 : Number(currentValue) || 0,
             currency,
             purchaseDate: purchaseDate || null,
             notes: notes || null,
@@ -135,12 +137,15 @@ export function AssetForm({
           </Field>
           <Field label="Valor actual">
             <Input
-              required
               type="number"
               step="any"
+              placeholder="auto"
               value={currentValue}
               onChange={(e) => setCurrentValue(e.target.value)}
             />
+            <p className="mt-1 font-mono text-[10px] text-subtle">
+              vacío = lo trae el ticker
+            </p>
           </Field>
         </div>
         <Field label="Fecha de compra">

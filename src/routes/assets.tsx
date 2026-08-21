@@ -134,6 +134,14 @@ function AssetsPage() {
                     </td>
                     <td className="px-2 py-1.5 text-right tabular-nums">
                       {formatUsd(valueUsd)}
+                      {a.unpriced ? (
+                        <span
+                          className="ml-1 text-[10px] tracking-wide text-loss"
+                          title="No se pudo traer el precio: se muestra el costo. Revisá el ticker."
+                        >
+                          SIN PRECIO
+                        </span>
+                      ) : null}
                     </td>
                     <td
                       className={`px-2 py-1.5 text-right tabular-nums ${pnl >= 0 ? "text-gain" : "text-loss"}`}

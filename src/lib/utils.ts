@@ -71,6 +71,7 @@ export function annualFactor(frequency: string) {
 export const ASSET_TYPES = [
   { value: "CRYPTO", label: "Crypto" },
   { value: "STOCK", label: "Acciones" },
+  { value: "CEDEAR", label: "CEDEAR" },
   { value: "BOND", label: "Bonos" },
   { value: "REAL_ESTATE", label: "Real Estate" },
   { value: "OTHER", label: "Otro" },

@@ -8,6 +8,12 @@
 
 const TIMEOUT_MS = 8_000;
 
+/**
+ * Overrides for tickers whose symbol is ambiguous on CoinGecko (several coins
+ * share "BTC"-like symbols). Anything not listed here is resolved dynamically —
+ * this map used to be the *only* source, which capped crypto support at these
+ * sixteen coins and left everything else unpriced.
+ */
 const COIN_IDS: Record<string, string> = {
   BTC: "bitcoin",
   ETH: "ethereum",
@@ -47,11 +53,14 @@ export async function fetchCryptoUsd(
   tickers: string[],
 ): Promise<Record<string, number>> {
   const idToTicker = new Map<string, string>();
-  for (const t of tickers) {
-    const key = t.toUpperCase();
-    const id = COIN_IDS[key];
-    if (id) idToTicker.set(id, key);
-  }
+  // Resolve in parallel: unknown tickers hit the search endpoint once and are
+  // cached, so an altcoin is priced like any major instead of being skipped.
+  const resolved = await Promise.all(
+    [...new Set(tickers.map((t) => t.toUpperCase()))].map(
+      async (key) => [key, await resolveCoinId(key)] as const,
+    ),
+  );
+  for (const [key, id] of resolved) if (id) idToTicker.set(id, key);
   if (idToTicker.size === 0) return {};
   const ids = encodeURIComponent([...idToTicker.keys()].join(","));
   const json = await getJson<Record<string, { usd?: number }>>(
@@ -212,6 +221,104 @@ export async function fetchArgBondFactors(
   const out: Record<string, number> = {};
   for (const [symbol, factor] of Object.entries(all)) {
     if (wanted.has(symbol)) out[symbol] = factor;
+  }
+  return out;
+}
+
+/* ------------------------------------------------- dynamic coin resolution */
+
+type CoinSearch = {
+  coins?: Array<{
+    id?: string;
+    symbol?: string;
+    market_cap_rank?: number | null;
+  }>;
+};
+
+/** Resolved ticker -> CoinGecko id, cached for the life of the process. */
+const coinIdCache = new Map<string, string | null>();
+
+/**
+ * Find the CoinGecko id for an arbitrary ticker.
+ *
+ * Several coins can share a symbol, so exact symbol matches are preferred and
+ * ranked by market cap — an unranked long-tail token should not outrank the
+ * real one. A negative result is cached too, so a typo does not re-query on
+ * every refresh.
+ */
+export async function resolveCoinId(ticker: string): Promise<string | null> {
+  const key = ticker.toUpperCase();
+  const known = COIN_IDS[key];
+  if (known) return known;
+  if (coinIdCache.has(key)) return coinIdCache.get(key) ?? null;
+
+  const json = await getJson<CoinSearch>(
+    `https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(key)}`,
+    { Accept: "application/json" },
+  );
+  const id = pickCoin(json, key);
+  coinIdCache.set(key, id);
+  return id;
+}
+
+export function pickCoin(json: unknown, ticker: string): string | null {
+  const coins = (json as CoinSearch | null)?.coins;
+  if (!Array.isArray(coins)) return null;
+  const exact = coins.filter(
+    (c) => String(c?.symbol ?? "").toUpperCase() === ticker.toUpperCase(),
+  );
+  const pool = exact.length > 0 ? exact : [];
+  if (pool.length === 0) return null;
+  pool.sort((a, b) => {
+    const ra = a.market_cap_rank ?? Number.MAX_SAFE_INTEGER;
+    const rb = b.market_cap_rank ?? Number.MAX_SAFE_INTEGER;
+    return ra - rb;
+  });
+  return pool[0]?.id ?? null;
+}
+
+/* ------------------------------------------------------------------ CEDEARs */
+
+/**
+ * CEDEAR prices in USD.
+ *
+ * CEDEARs quote in pesos and already bake in their conversion ratio, so
+ * dividing the ARS quote by MEP gives the per-unit USD figure a broker shows.
+ * Pricing them off the underlying US ticker is simply a different instrument.
+ */
+export async function fetchCedearUsd(
+  tickers: string[],
+  mep: number,
+): Promise<Record<string, number>> {
+  const wanted = new Set(tickers.map((t) => t.toUpperCase()));
+  if (wanted.size === 0 || !(mep > 0)) return {};
+  const json = await getJson<unknown>("https://data912.com/live/arg_cedears", {
+    Accept: "application/json",
+  });
+  const quotes = parseCedearQuotes(json);
+  const out: Record<string, number> = {};
+  for (const [symbol, ars] of Object.entries(quotes)) {
+    if (wanted.has(symbol)) out[symbol] = ars / mep;
+  }
+  return out;
+}
+
+/** Same feed shape as the bond endpoints, but the price is absolute ARS. */
+export function parseCedearQuotes(rows: unknown): Record<string, number> {
+  if (!Array.isArray(rows)) return {};
+  const out: Record<string, number> = {};
+  for (const raw of rows as BondQuote[]) {
+    const symbol = String(raw?.symbol ?? "").trim().toUpperCase();
+    if (!symbol) continue;
+    let price = toNum(raw?.c) ?? toNum(raw?.last);
+    if (price == null) {
+      const bid = toNum(raw?.px_bid);
+      const ask = toNum(raw?.px_ask);
+      if (bid != null && ask != null) price = (bid + ask) / 2;
+      else price = bid ?? ask;
+    }
+    if (price == null) continue;
+    out[symbol] = price;
   }
   return out;
 }

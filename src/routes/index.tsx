@@ -161,6 +161,10 @@ function Dashboard() {
   }, [data.snapshots, s.nw]);
 
   const nwRange = useRange(chart, "ALL");
+  const unpricedAssets = useMemo(
+    () => data.assets.filter((a) => a.unpriced),
+    [data.assets],
+  );
   /**
    * Everything known about one position, for the hover tip on any row that
    * names it. Each table shows three or four columns; this fills in the rest
@@ -327,6 +331,26 @@ function Dashboard() {
 
   return (
     <div className="flex flex-col gap-2">
+      {unpricedAssets.length > 0 ? (
+        <div className="border border-loss bg-loss/10 px-3 py-2 font-mono text-[12px]">
+          <span className="text-loss">SIN PRECIO</span>{" "}
+          <span className="text-fg">
+            {unpricedAssets.length} activo
+            {unpricedAssets.length === 1 ? "" : "s"} sin cotización:{" "}
+            {unpricedAssets.map((a) => a.ticker || a.name).join(", ")}
+          </span>
+          <span className="text-muted">
+            {" "}
+            — se está usando el costo como valor. Revisá el ticker o cargá el
+            valor a mano en{" "}
+          </span>
+          <Link to="/assets" className="text-accent underline">
+            POS
+          </Link>
+          <span className="text-muted">.</span>
+        </div>
+      ) : null}
+
       {/* KPIs fijos — no se reordenan */}
       <div className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-8">
         <Monitor

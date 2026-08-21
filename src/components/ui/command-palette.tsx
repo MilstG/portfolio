@@ -67,14 +67,17 @@ export function CommandPalette({ pinEnabled }: { pinEnabled: boolean }) {
               r.cryptoWanted ? `crypto ${r.crypto}/${r.cryptoWanted}` : null,
               r.stocksWanted ? `acciones ${r.stocks}/${r.stocksWanted}` : null,
               r.bondsWanted ? `bonos ${r.bonds}/${r.bondsWanted}` : null,
+              r.cedearsWanted
+                ? `cedears ${r.cedears}/${r.cedearsWanted}`
+                : null,
               r.fx ? "FX ok" : "FX sin datos",
             ].filter(Boolean);
-            const failed =
-              r.crypto < r.cryptoWanted ||
-              r.stocks < r.stocksWanted ||
-              r.bonds < r.bondsWanted ||
-              !r.fx;
-            const msg = `${r.updated} activo(s) · ${parts.join(" · ")}`;
+            const failed = r.unpriced.length > 0 || !r.fx;
+            const msg =
+              `${r.updated} activo(s) · ${parts.join(" · ")}` +
+              (r.unpriced.length
+                ? ` · sin precio: ${r.unpriced.join(", ")}`
+                : "");
             if (failed) toast.warning(msg);
             else toast.success(msg);
           } catch {

@@ -153,6 +153,27 @@ eq(px.parseBondQuotes([{symbol:'X', px_bid:98}]), {X:0.98}, 'bono solo bid');
 eq(px.parseBondQuotes([{symbol:'Y'}]), {}, 'bono sin precio');
 eq(px.parseBondQuotes('nada'), {}, 'bono respuesta no-array');
 
+
+// ---- resolucion de cripto y cedears ----
+// GP (Graphite Protocol) no estaba en la lista fija de 16 monedas, asi que
+// nunca se cotizaba y quedaba en 0.
+eq(px.pickCoin({coins:[
+  {id:'graphite-protocol', symbol:'GP', market_cap_rank:900},
+  {id:'otro-gp', symbol:'GP', market_cap_rank:null},
+  {id:'algo', symbol:'ALGO', market_cap_rank:50},
+]}, 'GP'), 'graphite-protocol', 'cripto: elige por market cap');
+eq(px.pickCoin({coins:[{id:'x', symbol:'XX', market_cap_rank:1}]}, 'GP'), null, 'cripto: sin match exacto');
+eq(px.pickCoin(null, 'GP'), null, 'cripto: respuesta nula');
+eq(px.pickCoin({coins:[
+  {id:'sin-rank', symbol:'GP'},
+  {id:'con-rank', symbol:'GP', market_cap_rank:120},
+]}, 'gp'), 'con-rank', 'cripto: rankeado le gana al sin rank');
+
+// CEDEARs: cotizan en pesos y ya incluyen el ratio -> ARS / MEP = USD por unidad
+eq(px.parseCedearQuotes([{symbol:'ASTS', c:6608}]), {ASTS:6608}, 'cedear: precio ARS crudo');
+eq(px.parseCedearQuotes([{symbol:'brkb', px_bid:32800, px_ask:33000}]), {BRKB:32900}, 'cedear: medio bid/ask');
+eq(px.parseCedearQuotes([{symbol:'X'}]), {}, 'cedear: sin precio');
+
 console.log(fail === 0 ? '\nTODOS OK' : `\n${fail} FALLARON`);
 await server.close();
 process.exit(fail === 0 ? 0 : 1);
