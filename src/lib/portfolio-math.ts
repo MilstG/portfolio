@@ -1,5 +1,13 @@
 import { annualFactor, toUsd } from "@/lib/utils";
-import type { Account, Asset, Fx, RecurringIncome } from "@/lib/types";
+import type {
+  Account,
+  Asset,
+  Fx,
+  Portfolio,
+  RecurringIncome,
+  Snapshot,
+  Tx,
+} from "@/lib/types";
 
 export function netWorthUsd(p: {
   assets: Asset[];
@@ -33,4 +41,450 @@ export function realEstateYield(assets: Asset[], rec: RecurringIncome[], fxAvg: 
     .filter((r) => ids.has(r.assetId))
     .reduce((s, r) => s + toUsd(r.amount, r.currency, fxAvg) * annualFactor(r.frequency), 0);
   return (yearly / value) * 100;
+}
+
+export function incomeYield(monthlyUsd: number, netWorth: number) {
+  if (netWorth <= 0) return 0;
+  return ((monthlyUsd * 12) / netWorth) * 100;
+}
+
+export type HoldingRow = {
+  id: string;
+  name: string;
+  ticker: string | null;
+  type: string;
+  valueUsd: number;
+  costUsd: number;
+  pnlUsd: number;
+  pnlPct: number;
+  weight: number;
+};
+
+export function rankedHoldings(
+  assets: Asset[],
+  accounts: Account[],
+  fxAvg: number,
+  netWorth: number,
+): HoldingRow[] {
+  const rows: HoldingRow[] = assets.map((a) => {
+    const valueUsd = toUsd(a.currentValue, a.currency, fxAvg);
+    const costUsd = toUsd(a.costBasis, a.currency, fxAvg);
+    const pnlUsd = valueUsd - costUsd;
+    return {
+      id: a.id,
+      name: a.name,
+      ticker: a.ticker,
+      type: a.type,
+      valueUsd,
+      costUsd,
+      pnlUsd,
+      pnlPct: costUsd ? (pnlUsd / costUsd) * 100 : 0,
+      weight: netWorth > 0 ? (valueUsd / netWorth) * 100 : 0,
+    };
+  });
+  for (const a of accounts) {
+    const valueUsd = toUsd(a.balance, a.currency, fxAvg);
+    rows.push({
+      id: a.id,
+      name: a.name,
+      ticker: a.institution,
+      type: "CASH",
+      valueUsd,
+      costUsd: valueUsd,
+      pnlUsd: 0,
+      pnlPct: 0,
+      weight: netWorth > 0 ? (valueUsd / netWorth) * 100 : 0,
+    });
+  }
+  return rows.sort((a, b) => b.valueUsd - a.valueUsd);
+}
+
+export function concentration(holdings: HoldingRow[]) {
+  return holdings[0]?.weight ?? 0;
+}
+
+export function currencyExposure(
+  assets: Asset[],
+  accounts: Account[],
+  fxAvg: number,
+): { code: string; valueUsd: number; weight: number }[] {
+  const map = new Map<string, number>();
+  const add = (currency: string, amount: number) => {
+    const code = (currency || "USD").toUpperCase();
+    const usd = toUsd(amount, code, fxAvg);
+    map.set(code, (map.get(code) || 0) + usd);
+  };
+  for (const a of assets) add(a.currency, a.currentValue);
+  for (const a of accounts) add(a.currency, a.balance);
+  const total = [...map.values()].reduce((s, v) => s + v, 0) || 1;
+  return [...map.entries()]
+    .map(([code, valueUsd]) => ({
+      code,
+      valueUsd,
+      weight: (valueUsd / total) * 100,
+    }))
+    .sort((a, b) => b.valueUsd - a.valueUsd);
+}
+
+export function liquiditySplit(
+  assets: Asset[],
+  accounts: Account[],
+  fxAvg: number,
+) {
+  const cash = accounts.reduce((s, a) => s + toUsd(a.balance, a.currency, fxAvg), 0);
+  let liquid = cash;
+  let illiquid = 0;
+  for (const a of assets) {
+    const v = toUsd(a.currentValue, a.currency, fxAvg);
+    if (a.type === "REAL_ESTATE") illiquid += v;
+    else liquid += v;
+  }
+  const total = liquid + illiquid || 1;
+  return {
+    liquid,
+    illiquid,
+    liquidPct: (liquid / total) * 100,
+    illiquidPct: (illiquid / total) * 100,
+  };
+}
+
+export function pnlByType(assets: Asset[], fxAvg: number) {
+  const map = new Map<string, { value: number; cost: number }>();
+  for (const a of assets) {
+    const cur = map.get(a.type) || { value: 0, cost: 0 };
+    cur.value += toUsd(a.currentValue, a.currency, fxAvg);
+    cur.cost += toUsd(a.costBasis, a.currency, fxAvg);
+    map.set(a.type, cur);
+  }
+  return [...map.entries()]
+    .map(([type, v]) => ({
+      type,
+      value: v.value,
+      cost: v.cost,
+      pnl: v.value - v.cost,
+      pnlPct: v.cost ? ((v.value - v.cost) / v.cost) * 100 : 0,
+    }))
+    .sort((a, b) => b.value - a.value);
+}
+
+export function allocationBuckets(
+  assets: Asset[],
+  accounts: Account[],
+  fxAvg: number,
+) {
+  const cashUsd = accounts.reduce((s, a) => s + toUsd(a.balance, a.currency, fxAvg), 0);
+  const buckets = [
+    { key: "CRYPTO", name: "CRYPTO", value: 0 },
+    { key: "STOCK", name: "EQTY", value: 0 },
+    { key: "BOND", name: "FI", value: 0 },
+    { key: "REAL_ESTATE", name: "RE", value: 0 },
+    { key: "CASH", name: "CASH", value: cashUsd },
+    { key: "OTHER", name: "OTHER", value: 0 },
+  ];
+  for (const a of assets) {
+    const b = buckets.find((x) => x.key === a.type) || buckets.find((x) => x.key === "OTHER");
+    if (b) b.value += toUsd(a.currentValue, a.currency, fxAvg);
+  }
+  const alloc = buckets.filter((b) => b.value > 0);
+  const total = alloc.reduce((s, b) => s + b.value, 0) || 1;
+  return { alloc, total };
+}
+
+export type ProjectedEvent = {
+  date: string;
+  name: string;
+  amountUsd: number;
+  frequency: string;
+  assetId: string;
+};
+
+function addMonths(iso: string, months: number): string {
+  const d = new Date(iso + "T12:00:00Z");
+  d.setUTCMonth(d.getUTCMonth() + months);
+  return d.toISOString().slice(0, 10);
+}
+
+function addDays(iso: string, days: number): string {
+  const d = new Date(iso + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function stepFrequency(iso: string, frequency: string): string {
+  switch (frequency) {
+    case "WEEKLY":
+      return addDays(iso, 7);
+    case "MONTHLY":
+      return addMonths(iso, 1);
+    case "QUARTERLY":
+      return addMonths(iso, 3);
+    case "SEMI_ANNUAL":
+      return addMonths(iso, 6);
+    case "ANNUAL":
+      return addMonths(iso, 12);
+    default:
+      return addMonths(iso, 1);
+  }
+}
+
+/** Project recurring income events over the next N months from today. */
+export function projectRecurring(
+  items: RecurringIncome[],
+  fxAvg: number,
+  months = 12,
+): ProjectedEvent[] {
+  const today = new Date().toISOString().slice(0, 10);
+  const end = addMonths(today, months);
+  const out: ProjectedEvent[] = [];
+  for (const r of items) {
+    let cursor = r.nextDate < today ? today : r.nextDate;
+    let guard = 0;
+    while (cursor < today && guard < 48) {
+      cursor = stepFrequency(cursor, r.frequency);
+      guard += 1;
+    }
+    guard = 0;
+    while (cursor <= end && guard < 48) {
+      out.push({
+        date: cursor,
+        name: r.name,
+        amountUsd: toUsd(r.amount, r.currency, fxAvg),
+        frequency: r.frequency,
+        assetId: r.assetId,
+      });
+      cursor = stepFrequency(cursor, r.frequency);
+      guard += 1;
+    }
+  }
+  return out.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+export function incomeNextDays(events: ProjectedEvent[], days: number) {
+  const today = new Date().toISOString().slice(0, 10);
+  const end = addDays(today, days);
+  return events
+    .filter((e) => e.date >= today && e.date <= end)
+    .reduce((s, e) => s + e.amountUsd, 0);
+}
+
+export function monthlyProjectionBuckets(events: ProjectedEvent[], months = 12) {
+  const today = new Date();
+  const buckets: { key: string; label: string; total: number }[] = [];
+  for (let i = 0; i < months; i++) {
+    const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + i, 1));
+    const key = d.toISOString().slice(0, 7);
+    buckets.push({
+      key,
+      label: key.slice(5) + "/" + key.slice(2, 4),
+      total: 0,
+    });
+  }
+  for (const e of events) {
+    const key = e.date.slice(0, 7);
+    const b = buckets.find((x) => x.key === key);
+    if (b) b.total += e.amountUsd;
+  }
+  return buckets;
+}
+
+export function nwDelta(snapshots: Snapshot[], currentNw: number) {
+  if (snapshots.length === 0) return { delta: 0, pct: 0, prior: null as number | null };
+  const prior = snapshots[snapshots.length - 1]?.totalUsd ?? null;
+  if (prior == null) return { delta: 0, pct: 0, prior: null };
+  const today = new Date().toISOString().slice(0, 10);
+  let base = prior;
+  if (snapshots[snapshots.length - 1]?.date === today && snapshots.length > 1) {
+    base = snapshots[snapshots.length - 2].totalUsd;
+  }
+  const delta = currentNw - base;
+  const pct = base ? (delta / base) * 100 : 0;
+  return { delta, pct, prior: base };
+}
+
+export function txTotals(transactions: Tx[], fxAvg: number) {
+  let income = 0;
+  let expense = 0;
+  for (const t of transactions) {
+    const v = toUsd(t.amount, t.currency, fxAvg);
+    if (v >= 0) income += v;
+    else expense += v;
+  }
+  return { income, expense, net: income + expense };
+}
+
+export function categoryBreakdown(transactions: Tx[], fxAvg: number) {
+  const map = new Map<string, number>();
+  for (const t of transactions) {
+    const v = toUsd(t.amount, t.currency, fxAvg);
+    const key = (t.category || t.type || "OTHER").toUpperCase();
+    map.set(key, (map.get(key) || 0) + v);
+  }
+  return [...map.entries()]
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+}
+
+export function monthlyTxSeries(transactions: Tx[], fxAvg: number, months = 6) {
+  const today = new Date();
+  const buckets: { key: string; label: string; in: number; out: number }[] = [];
+  for (let i = months - 1; i >= 0; i--) {
+    const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - i, 1));
+    const key = d.toISOString().slice(0, 7);
+    buckets.push({
+      key,
+      label: key.slice(5) + "/" + key.slice(2, 4),
+      in: 0,
+      out: 0,
+    });
+  }
+  for (const t of transactions) {
+    const key = t.date.slice(0, 7);
+    const b = buckets.find((x) => x.key === key);
+    if (!b) continue;
+    const v = toUsd(t.amount, t.currency, fxAvg);
+    if (v >= 0) b.in += v;
+    else b.out += Math.abs(v);
+  }
+  return buckets;
+}
+
+export function buildInsights(input: {
+  nw: number;
+  monthly: number;
+  yieldPct: number;
+  concentration: number;
+  liquidPct: number;
+  cashPct: number;
+  arsWeight: number;
+  nwDeltaPct: number;
+  reYield: number;
+  next30: number;
+  holdingsCount: number;
+}): string[] {
+  const lines: string[] = [];
+  if (input.nwDeltaPct !== 0) {
+    lines.push(
+      input.nwDeltaPct >= 0
+        ? `Patrimonio arriba ${Math.abs(input.nwDeltaPct).toFixed(1)}% vs snapshot previo.`
+        : `Patrimonio abajo ${Math.abs(input.nwDeltaPct).toFixed(1)}% vs snapshot previo.`,
+    );
+  }
+  if (input.yieldPct > 0) {
+    lines.push(
+      `Yield de ingresos ${input.yieldPct.toFixed(1)}% anual sobre el neto (${formatRough(input.monthly)}/mes).`,
+    );
+  } else {
+    lines.push("Sin ingresos recurrentes configurados — agregá alquileres o cupones en POS.");
+  }
+  if (input.concentration >= 30) {
+    lines.push(
+      `Concentración alta: la mayor posición pesa ${input.concentration.toFixed(0)}% del libro.`,
+    );
+  } else if (input.holdingsCount > 0) {
+    lines.push(`Libro diversificado: top posición al ${input.concentration.toFixed(0)}%.`);
+  }
+  if (input.cashPct >= 25) {
+    lines.push(`Cash elevado (${input.cashPct.toFixed(0)}% del neto) — idle capital o buffer intencional.`);
+  } else if (input.cashPct < 5 && input.nw > 0) {
+    lines.push(`Cash bajo (${input.cashPct.toFixed(0)}%) — poca liquidez inmediata.`);
+  }
+  if (input.liquidPct < 40) {
+    lines.push(
+      `Solo ${input.liquidPct.toFixed(0)}% líquido; el resto está en real estate u otros illíquidos.`,
+    );
+  }
+  if (input.arsWeight >= 20) {
+    lines.push(
+      `Exposición ARS ${input.arsWeight.toFixed(0)}% del libro (convertido al FX promedio).`,
+    );
+  }
+  if (input.reYield > 0) {
+    lines.push(`Yield bruto real estate ${input.reYield.toFixed(1)}% anual.`);
+  }
+  if (input.next30 > 0) {
+    lines.push(`Ingresos esperados próximos 30 días: ${formatRough(input.next30)}.`);
+  }
+  return lines.slice(0, 6);
+}
+
+function formatRough(n: number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(n);
+}
+
+export function computeDashboard(p: Portfolio) {
+  const nw = netWorthUsd(p);
+  const cashUsd = p.accounts.reduce(
+    (s, a) => s + toUsd(a.balance, a.currency, p.fx.average),
+    0,
+  );
+  const costUsd = p.assets.reduce(
+    (s, a) => s + toUsd(a.costBasis, a.currency, p.fx.average),
+    0,
+  );
+  const assetsUsd = p.assets.reduce(
+    (s, a) => s + toUsd(a.currentValue, a.currency, p.fx.average),
+    0,
+  );
+  const pnl = assetsUsd - costUsd;
+  const monthly = monthlyRecurringUsd(p.recurring, p.fx.average);
+  const yieldPct = incomeYield(monthly, nw);
+  const reYield = realEstateYield(p.assets, p.recurring, p.fx.average);
+  const holdings = rankedHoldings(p.assets, p.accounts, p.fx.average, nw);
+  const topWeight = concentration(holdings);
+  const currencies = currencyExposure(p.assets, p.accounts, p.fx.average);
+  const liq = liquiditySplit(p.assets, p.accounts, p.fx.average);
+  const byType = pnlByType(p.assets, p.fx.average);
+  const { alloc, total: allocTotal } = allocationBuckets(p.assets, p.accounts, p.fx.average);
+  const projected = projectRecurring(p.recurring, p.fx.average, 12);
+  const next30 = incomeNextDays(projected, 30);
+  const next90 = incomeNextDays(projected, 90);
+  const projMonths = monthlyProjectionBuckets(projected, 12);
+  const delta = nwDelta(p.snapshots, nw);
+  const tx = txTotals(p.transactions, p.fx.average);
+  const cashPct = nw > 0 ? (cashUsd / nw) * 100 : 0;
+  const arsWeight = currencies.find((c) => c.code === "ARS")?.weight ?? 0;
+  const insights = buildInsights({
+    nw,
+    monthly,
+    yieldPct,
+    concentration: topWeight,
+    liquidPct: liq.liquidPct,
+    cashPct,
+    arsWeight,
+    nwDeltaPct: delta.pct,
+    reYield,
+    next30,
+    holdingsCount: holdings.length,
+  });
+
+  return {
+    nw,
+    cashUsd,
+    costUsd,
+    assetsUsd,
+    pnl,
+    monthly,
+    annualIncome: monthly * 12,
+    yieldPct,
+    reYield,
+    holdings,
+    topWeight,
+    currencies,
+    liq,
+    byType,
+    alloc,
+    allocTotal,
+    projected,
+    next30,
+    next90,
+    projMonths,
+    delta,
+    tx,
+    cashPct,
+    insights,
+  };
 }
