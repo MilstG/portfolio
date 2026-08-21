@@ -1824,11 +1824,14 @@ function Dashboard() {
                         ? formatPct(ret.annualised * 100)
                         : formatPct(ret.simple * 100)}
                     </p>
+                    {/* Tenencia promedio ponderada por costo, no el span de la
+                        posición más vieja: es el período que la tasa refleja. */}
                     <p className="mt-1 font-mono text-[11px] text-subtle">
-                      {ret.annualisedLeads ? "anualizado" : "total"} ·{" "}
-                      {ret.spanYears >= 1
-                        ? `${ret.spanYears.toFixed(1)} años`
-                        : `${Math.max(1, Math.round(ret.spanYears * 365))} días`}{" "}
+                      {ret.annualisedLeads ? "anualizado" : "total"} · tenencia
+                      prom.{" "}
+                      {ret.weightedYears >= 1
+                        ? `${ret.weightedYears.toFixed(1)} años`
+                        : `${Math.max(1, Math.round(ret.weightedYears * 365))} días`}{" "}
                       · {ret.covered}/{ret.total} posiciones
                     </p>
                     {!ret.annualisedLeads ? (

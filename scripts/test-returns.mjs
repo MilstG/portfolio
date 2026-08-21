@@ -74,6 +74,37 @@ isNull(xirr([]), 'vacio');
   if (!largo.annualisedLeads) fail++;
 }
 
+// ---- denominador del retorno ----
+// El span de la posicion mas vieja no es el periodo que la tasa refleja. Con
+// mucha plata puesta hace poco, un libro de 1.5 años de span puede promediar
+// 0.5 y dar +5.1% total con +11% anualizado sin contradiccion.
+{
+  const { portfolioReturn } = await server.ssrLoadModule('/src/lib/returns.ts');
+  const mk = (list) => ({
+    assets: list.map((x,i)=>({ id:'w'+i, name:'W'+i, ticker:'W'+i, type:'BOND', quantity:1,
+      costBasis:x.cost, currentValue:x.value, currency:'USD', purchaseDate:x.date,
+      notes:null, priceId:null, unpriced:false })),
+    accounts:[], recurring:[], transactions:[], snapshots:[],
+    fx:{official:1,blue:1,mep:1,average:1}, liabilities:[], goals:[],
+    allocTargets:[], fxHistory:[], settings:{pinEnabled:false,hasPin:false},
+    taxLots:[], watchlist:[], lastPriceRun:null,
+  });
+  const r = portfolioReturn(mk([
+    { date:'2025-02-18', cost:20000,  value:21000 },
+    { date:'2026-05-07', cost:200000, value:210000 },
+    { date:'2026-02-01', cost:170069, value:178800 },
+  ]), '2026-08-21');
+  near(r.spanYears, 1.5, 0.02, 'span = posicion mas vieja');
+  near(r.weightedYears, 0.47, 0.02, 'tenencia promedio ponderada por costo');
+  // el anualizado tiene que ser coherente con el total sobre la tenencia promedio
+  const esperado = Math.pow(1 + r.simple, 1 / r.weightedYears) - 1;
+  near(r.annualised, esperado, 0.01, 'XIRR coherente con total/tenencia promedio');
+  // y con menos de un año promedio, el titular debe ser el total
+  console.log(!r.annualisedLeads ? 'PASS' : 'FAIL',
+    'con tenencia < 1 año encabeza el total -> lidera', r.annualisedLeads);
+  if (r.annualisedLeads) fail++;
+}
+
 // ---- ingresos proyectados ----
 // Un libro comprado el mes pasado no cobro nada todavia, asi que la columna
 // mostraba guiones aunque cada bono tenga su schedule de cupones.

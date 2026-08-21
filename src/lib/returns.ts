@@ -175,8 +175,18 @@ export type PortfolioReturn = {
    * the flows are too recent to annualise.
    */
   annualised: number | null;
-  /** Years from the earliest flow to today — how much history the rate rests on. */
+  /** Years from the earliest flow to today. The oldest position, not the norm. */
   spanYears: number;
+  /**
+   * Cost-weighted average holding period — the denominator a money-weighted
+   * rate actually reflects.
+   *
+   * Showing the span instead was misleading: with most of the capital placed
+   * recently, a book spanning 1.5 years but averaging 0.5 can return +5.1% in
+   * total and +11% annualised, and the two only look contradictory against the
+   * span.
+   */
+  weightedYears: number;
   /**
    * Whether the annualised figure deserves to be the headline. Below a year it
    * is an extrapolation from a short window, so the measured total leads.
@@ -263,12 +273,19 @@ export function portfolioReturn(
   );
   const spanYears = firstFlow ? years(firstFlow, today) : 0;
 
-  const rate = spanYears >= MIN_ANNUALISE_YEARS ? xirr(flows) : null;
+  const weightedYears =
+    costUsd > 0
+      ? dated.reduce((sum, r) => sum + r.costUsd * (r.holdingYears ?? 0), 0) /
+        costUsd
+      : 0;
+
+  const rate = weightedYears >= MIN_ANNUALISE_YEARS ? xirr(flows) : null;
 
   return {
     annualised: rate,
     spanYears,
-    annualisedLeads: spanYears >= 1 && rate !== null,
+    weightedYears,
+    annualisedLeads: weightedYears >= 1 && rate !== null,
     simple: costUsd > 0 ? (valueUsd + incomeUsd - costUsd) / costUsd : null,
     costUsd,
     valueUsd,
