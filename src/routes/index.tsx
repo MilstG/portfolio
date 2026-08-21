@@ -34,6 +34,15 @@ export const Route = createFileRoute("/")({
 
 const COLORS = ["#ff6d00", "#22c55e", "#3b82f6", "#a855f7", "#eab308", "#ef4444"];
 
+const CHART_TIP = {
+  background: "#000",
+  border: "1px solid #ff6d00",
+  borderRadius: 0,
+  fontSize: 11,
+  fontFamily: "IBM Plex Mono",
+  padding: "6px 8px",
+};
+
 function Dashboard() {
   const data = Route.useLoaderData();
   const s = computeDashboard(data);
@@ -192,24 +201,25 @@ function Dashboard() {
             <Monitor
               title="ALLOCATION"
               action={
-                <Tip content="Distribución del patrimonio por asset class. Hover sobre el donut o cada fila.">
+                <Tip content="Distribución del patrimonio por asset class. Hover una fila o el donut para detalle.">
                   <span className="font-mono text-[9px] text-subtle">?</span>
                 </Tip>
               }
             >
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                <div className="relative mx-auto h-[148px] w-[148px] shrink-0">
-                  <ResponsiveContainer width={148} height={148}>
-                    <PieChart margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
+              <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
+                {/* Donut fijo — sin overlays absolutos problemáticos */}
+                <div className="relative mx-auto h-[140px] w-[140px] shrink-0">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
                       <Pie
                         data={s.alloc}
                         dataKey="value"
                         nameKey="name"
                         cx="50%"
                         cy="50%"
-                        innerRadius={42}
-                        outerRadius={66}
-                        paddingAngle={1.5}
+                        innerRadius={40}
+                        outerRadius={62}
+                        paddingAngle={2}
                         stroke="#0a0a0a"
                         strokeWidth={2}
                         isAnimationActive={false}
@@ -219,58 +229,58 @@ function Dashboard() {
                         ))}
                       </Pie>
                       <Tooltip
-                        contentStyle={{
-                          background: "#000",
-                          border: "1px solid #ff6d00",
-                          borderRadius: 0,
-                          fontSize: 11,
-                          fontFamily: "IBM Plex Mono",
-                          padding: "6px 8px",
-                        }}
+                        contentStyle={CHART_TIP}
                         formatter={(v: number, name: string) => [
-                          `${formatUsd(v)} · ${((Number(v) / s.allocTotal) * 100).toFixed(1)}% del NW`,
+                          `${formatUsd(Number(v))} · ${((Number(v) / (s.allocTotal || 1)) * 100).toFixed(1)}%`,
                           name,
                         ]}
                       />
                     </PieChart>
                   </ResponsiveContainer>
                   <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                    <span className="font-mono text-[9px] tracking-widest text-muted">TOTAL</span>
-                    <span className="font-mono text-xs tabular-nums text-fg">{formatUsd(s.allocTotal)}</span>
+                    <span className="font-mono text-[8px] tracking-[0.14em] text-muted">TOTAL</span>
+                    <span className="font-mono text-[11px] tabular-nums text-fg">
+                      {formatUsd(s.allocTotal)}
+                    </span>
                   </div>
                 </div>
-                <div className="min-w-0 flex-1 space-y-1">
+
+                {/* Legend vertical limpia */}
+                <div className="min-w-0 flex-1 space-y-1.5">
                   {s.alloc.map((row, i) => {
-                    const pct = (row.value / s.allocTotal) * 100;
+                    const pct = s.allocTotal > 0 ? (row.value / s.allocTotal) * 100 : 0;
                     return (
-                      <Tip
+                      <div
                         key={row.key}
-                        side="left"
-                        content={
-                          <div className="space-y-0.5">
-                            <p className="text-accent">{row.name}</p>
-                            <p>{formatUsd(row.value)}</p>
-                            <p className="text-subtle">{pct.toFixed(2)}% del patrimonio</p>
-                          </div>
-                        }
+                        className="flex items-center gap-2 font-mono text-[11px]"
+                        title={`${row.name}: ${formatUsd(row.value)} · ${pct.toFixed(2)}% del patrimonio`}
                       >
-                        <div className="group flex w-full items-center gap-2 font-mono text-[11px] hover:bg-raised/60">
-                          <span className="h-2.5 w-2.5 shrink-0" style={{ background: COLORS[i % COLORS.length] }} />
-                          <span className="w-12 shrink-0 text-muted">{row.name}</span>
-                          <div className="h-1.5 min-w-0 flex-1 bg-line">
-                            <div
-                              className="h-1.5"
-                              style={{ width: `${Math.min(100, pct)}%`, background: COLORS[i % COLORS.length] }}
-                            />
-                          </div>
-                          <span className="w-[4.5rem] shrink-0 text-right tabular-nums text-fg">
-                            {formatUsd(row.value)}
-                          </span>
-                          <span className="w-9 shrink-0 text-right tabular-nums text-subtle">{pct.toFixed(0)}%</span>
+                        <span
+                          className="h-2.5 w-2.5 shrink-0"
+                          style={{ background: COLORS[i % COLORS.length] }}
+                        />
+                        <span className="w-12 shrink-0 text-muted">{row.name}</span>
+                        <div className="h-1.5 min-w-0 flex-1 bg-line">
+                          <div
+                            className="h-1.5"
+                            style={{
+                              width: `${Math.min(100, pct)}%`,
+                              background: COLORS[i % COLORS.length],
+                            }}
+                          />
                         </div>
-                      </Tip>
+                        <span className="w-[4.75rem] shrink-0 text-right tabular-nums text-fg">
+                          {formatUsd(row.value)}
+                        </span>
+                        <span className="w-9 shrink-0 text-right tabular-nums text-subtle">
+                          {pct.toFixed(0)}%
+                        </span>
+                      </div>
                     );
                   })}
+                  {s.alloc.length === 0 ? (
+                    <p className="font-mono text-xs text-muted">sin allocation</p>
+                  ) : null}
                 </div>
               </div>
             </Monitor>
@@ -411,16 +421,7 @@ function Dashboard() {
                         tickLine={false}
                       />
                       <YAxis hide domain={["dataMin - 4000", "dataMax + 4000"]} />
-                      <Tooltip
-                        contentStyle={{
-                          background: "#000",
-                          border: "1px solid #ff6d00",
-                          borderRadius: 0,
-                          fontSize: 11,
-                          fontFamily: "IBM Plex Mono",
-                        }}
-                        formatter={(v: number) => [formatUsd(v), "NW"]}
-                      />
+                      <Tooltip contentStyle={CHART_TIP} formatter={(v: number) => [formatUsd(v), "NW"]} />
                       <Area
                         type="stepAfter"
                         dataKey="value"
@@ -461,13 +462,7 @@ function Dashboard() {
                           />
                           <YAxis hide />
                           <Tooltip
-                            contentStyle={{
-                              background: "#000",
-                              border: "1px solid #ff6d00",
-                              borderRadius: 0,
-                              fontSize: 11,
-                              fontFamily: "IBM Plex Mono",
-                            }}
+                            contentStyle={CHART_TIP}
                             formatter={(v: number, name: string) => [
                               formatUsd(v),
                               INCOME_KIND_META[name as IncomeKind]?.label ?? name,
@@ -607,13 +602,7 @@ function Dashboard() {
                       />
                       <YAxis hide />
                       <Tooltip
-                        contentStyle={{
-                          background: "#000",
-                          border: "1px solid #ff6d00",
-                          borderRadius: 0,
-                          fontSize: 11,
-                          fontFamily: "IBM Plex Mono",
-                        }}
+                        contentStyle={CHART_TIP}
                         formatter={(v: number, _n: string, p: { payload?: { count?: number } }) => [
                           `${formatUsd(v)} · ${p?.payload?.count ?? 0} pagos`,
                           "Total",
@@ -741,16 +730,7 @@ function Dashboard() {
                         tickLine={false}
                       />
                       <YAxis hide />
-                      <Tooltip
-                        contentStyle={{
-                          background: "#000",
-                          border: "1px solid #ff6d00",
-                          borderRadius: 0,
-                          fontSize: 11,
-                          fontFamily: "IBM Plex Mono",
-                        }}
-                        formatter={(v: number, name: string) => [formatUsd(v), name]}
-                      />
+                      <Tooltip contentStyle={CHART_TIP} formatter={(v: number, name: string) => [formatUsd(v), name]} />
                       <Bar dataKey="income" fill="#22c55e" fillOpacity={0.9} name="Income" />
                       <Bar dataKey="expense" fill="#ef4444" fillOpacity={0.9} name="Expense" />
                     </BarChart>
@@ -776,34 +756,33 @@ function Dashboard() {
                   <p className="font-mono text-xs text-muted">sin targets — configurá en Settings</p>
                 ) : (
                   a.allocTarget.map((r) => (
-                    <Tip
+                    <div
                       key={r.type}
-                      content={`${r.type}: actual ${r.actualPct.toFixed(1)}% · target ${r.targetPct.toFixed(1)}% · ${formatUsd(r.actualUsd)}`}
+                      className="flex items-center gap-2 font-mono text-[11px]"
+                      title={`${r.type}: actual ${r.actualPct.toFixed(1)}% · target ${r.targetPct.toFixed(1)}% · ${formatUsd(r.actualUsd)}`}
                     >
-                      <div className="flex items-center gap-2 font-mono text-[11px]">
-                        <span className="w-16 shrink-0 truncate text-muted">{r.type.slice(0, 8)}</span>
-                        <div className="relative h-2 flex-1 bg-line">
+                      <span className="w-16 shrink-0 truncate text-muted">{r.type.slice(0, 8)}</span>
+                      <div className="relative h-2 flex-1 bg-line">
+                        <div
+                          className="absolute inset-y-0 left-0 bg-accent/40"
+                          style={{ width: `${Math.min(100, r.actualPct)}%` }}
+                        />
+                        {r.targetPct > 0 ? (
                           <div
-                            className="absolute inset-y-0 left-0 bg-accent/40"
-                            style={{ width: `${Math.min(100, r.actualPct)}%` }}
+                            className="absolute inset-y-0 w-0.5 bg-fg"
+                            style={{ left: `${Math.min(100, r.targetPct)}%` }}
                           />
-                          {r.targetPct > 0 ? (
-                            <div
-                              className="absolute inset-y-0 w-0.5 bg-fg"
-                              style={{ left: `${Math.min(100, r.targetPct)}%` }}
-                            />
-                          ) : null}
-                        </div>
-                        <span
-                          className={`w-12 shrink-0 text-right tabular-nums ${
-                            Math.abs(r.gap) >= 5 ? "text-loss" : "text-subtle"
-                          }`}
-                        >
-                          {r.gap >= 0 ? "+" : ""}
-                          {r.gap.toFixed(0)}%
-                        </span>
+                        ) : null}
                       </div>
-                    </Tip>
+                      <span
+                        className={`w-12 shrink-0 text-right tabular-nums ${
+                          Math.abs(r.gap) >= 5 ? "text-loss" : "text-subtle"
+                        }`}
+                      >
+                        {r.gap >= 0 ? "+" : ""}
+                        {r.gap.toFixed(0)}%
+                      </span>
+                    </div>
                   ))
                 )}
               </div>
@@ -870,22 +849,24 @@ function Dashboard() {
             >
               <div className="flex h-36 flex-col justify-center gap-2">
                 {a.fxExposure.map((c, i) => (
-                  <Tip key={c.code} content={`${c.code}: ${formatUsd(c.valueUsd)} · ${c.weight.toFixed(1)}% del libro`}>
-                    <div className="flex items-center gap-2 font-mono text-[11px]">
-                      <span className="w-10 text-muted">{c.code}</span>
-                      <div className="h-2 flex-1 bg-line">
-                        <div
-                          className="h-2"
-                          style={{
-                            width: `${Math.min(100, c.weight)}%`,
-                            background: COLORS[i % COLORS.length],
-                          }}
-                        />
-                      </div>
-                      <span className="w-14 text-right tabular-nums text-fg">{c.weight.toFixed(0)}%</span>
-                      <span className="w-[4.5rem] text-right tabular-nums text-subtle">{formatUsd(c.valueUsd)}</span>
+                  <div
+                    key={c.code}
+                    className="flex items-center gap-2 font-mono text-[11px]"
+                    title={`${c.code}: ${formatUsd(c.valueUsd)} · ${c.weight.toFixed(1)}% del libro`}
+                  >
+                    <span className="w-10 text-muted">{c.code}</span>
+                    <div className="h-2 flex-1 bg-line">
+                      <div
+                        className="h-2"
+                        style={{
+                          width: `${Math.min(100, c.weight)}%`,
+                          background: COLORS[i % COLORS.length],
+                        }}
+                      />
                     </div>
-                  </Tip>
+                    <span className="w-14 text-right tabular-nums text-fg">{c.weight.toFixed(0)}%</span>
+                    <span className="w-[4.5rem] text-right tabular-nums text-subtle">{formatUsd(c.valueUsd)}</span>
+                  </div>
                 ))}
                 {a.fxExposure.length === 0 ? (
                   <p className="font-mono text-xs text-muted">sin data</p>
@@ -919,13 +900,7 @@ function Dashboard() {
                         <XAxis dataKey="date" hide />
                         <YAxis hide domain={["dataMin - 1", 0]} />
                         <Tooltip
-                          contentStyle={{
-                            background: "#000",
-                            border: "1px solid #ff6d00",
-                            borderRadius: 0,
-                            fontSize: 11,
-                            fontFamily: "IBM Plex Mono",
-                          }}
+                          contentStyle={CHART_TIP}
                           formatter={(v: number) => [`${v.toFixed(2)}%`, "DD"]}
                           labelFormatter={(l) => String(l)}
                         />
@@ -1046,13 +1021,7 @@ function Dashboard() {
                     />
                     <YAxis hide domain={["dataMin - 2000", "dataMax + 2000"]} />
                     <Tooltip
-                      contentStyle={{
-                        background: "#000",
-                        border: "1px solid #ff6d00",
-                        borderRadius: 0,
-                        fontSize: 11,
-                        fontFamily: "IBM Plex Mono",
-                      }}
+                      contentStyle={CHART_TIP}
                       formatter={(v: number) => [formatUsd(v), "NW"]}
                       labelFormatter={(l) => `FX ${l}%`}
                     />
@@ -1092,9 +1061,7 @@ function Dashboard() {
                       className="flex items-center justify-between gap-2 border-b border-line/40 py-0.5 font-mono text-[11px]"
                     >
                       <span className="truncate text-fg">{r.type}</span>
-                      <span
-                        className={`shrink-0 ${r.action === "REDUCIR" ? "text-loss" : "text-gain"}`}
-                      >
+                      <span className={`shrink-0 ${r.action === "REDUCIR" ? "text-loss" : "text-gain"}`}>
                         {r.action}
                       </span>
                       <span className="shrink-0 tabular-nums text-subtle">
@@ -1135,9 +1102,7 @@ function Dashboard() {
                         <td className="py-1 pr-2 text-right tabular-nums text-muted">{formatUsd(r.cost)}</td>
                         <td className="py-1 pr-2 text-right tabular-nums">{formatUsd(r.value)}</td>
                         <td
-                          className={`py-1 text-right tabular-nums ${
-                            r.ratio < 1 ? "text-loss" : "text-gain"
-                          }`}
+                          className={`py-1 text-right tabular-nums ${r.ratio < 1 ? "text-loss" : "text-gain"}`}
                         >
                           {r.ratio.toFixed(2)}x
                         </td>
@@ -1172,23 +1137,22 @@ function Dashboard() {
                   <p className="font-mono text-xs text-muted">sin goals — agregá en Settings</p>
                 ) : (
                   a.goals.map((g) => (
-                    <Tip
+                    <div
                       key={g.id}
-                      content={`${g.name}: ${formatUsd(s.nw)} / ${formatUsd(g.targetUsd)} · faltan ${formatUsd(g.remaining)}${g.targetDate ? ` · target ${g.targetDate}` : ""}`}
+                      className="space-y-1"
+                      title={`${g.name}: ${formatUsd(s.nw)} / ${formatUsd(g.targetUsd)} · faltan ${formatUsd(g.remaining)}${g.targetDate ? ` · target ${g.targetDate}` : ""}`}
                     >
-                      <div className="space-y-1">
-                        <div className="flex justify-between font-mono text-[11px]">
-                          <span className="truncate text-fg">{g.name}</span>
-                          <span className="tabular-nums text-accent">{g.progressPct.toFixed(0)}%</span>
-                        </div>
-                        <div className="h-1.5 bg-line">
-                          <div
-                            className="h-1.5 bg-accent"
-                            style={{ width: `${Math.min(100, g.progressPct)}%` }}
-                          />
-                        </div>
+                      <div className="flex justify-between font-mono text-[11px]">
+                        <span className="truncate text-fg">{g.name}</span>
+                        <span className="tabular-nums text-accent">{g.progressPct.toFixed(0)}%</span>
                       </div>
-                    </Tip>
+                      <div className="h-1.5 bg-line">
+                        <div
+                          className="h-1.5 bg-accent"
+                          style={{ width: `${Math.min(100, g.progressPct)}%` }}
+                        />
+                      </div>
+                    </div>
                   ))
                 )}
               </div>

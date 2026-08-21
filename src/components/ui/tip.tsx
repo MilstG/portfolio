@@ -1,11 +1,5 @@
 import * as TooltipPrimitive from "@radix-ui/react-tooltip";
-import {
-  Children,
-  cloneElement,
-  isValidElement,
-  type ReactElement,
-  type ReactNode,
-} from "react";
+import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 /** Mount once near the root so tips share a single provider. */
@@ -17,11 +11,7 @@ export function TipProvider({ children }: { children: ReactNode }) {
   );
 }
 
-/**
- * Bloomberg-style hover tip.
- * Does NOT wrap children in an inline-flex span (that broke full-width legend rows).
- * Prefer a single ReactElement child so asChild can attach handlers without a layout box.
- */
+/** Bloomberg-style hover tip. Does not break block/flex layouts. */
 export function Tip({
   content,
   children,
@@ -34,22 +24,12 @@ export function Tip({
   className?: string;
 }) {
   if (!content) return <>{children}</>;
-
-  const child = Children.only(
-    isValidElement(children) ? (
-      children
-    ) : (
-      <span className={cn("cursor-help", className)}>{children}</span>
-    ),
-  ) as ReactElement<{ className?: string }>;
-
-  const trigger = cloneElement(child, {
-    className: cn(child.props.className, "cursor-help", className),
-  });
-
   return (
     <TooltipPrimitive.Root>
-      <TooltipPrimitive.Trigger asChild>{trigger}</TooltipPrimitive.Trigger>
+      <TooltipPrimitive.Trigger asChild>
+        {/* block w-full keeps legend rows stacked; inline-flex was collapsing them horizontally */}
+        <span className={cn("block w-full cursor-help", className)}>{children}</span>
+      </TooltipPrimitive.Trigger>
       <TooltipPrimitive.Portal>
         <TooltipPrimitive.Content
           side={side}
