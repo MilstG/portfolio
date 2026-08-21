@@ -5,7 +5,7 @@
     "buildCommand": "npm run build"
   },
   "deploy": {
-    "startCommand": "node .output/server/index.mjs",
+    "startCommand": "npm start",
     "restartPolicyType": "ON_FAILURE"
   }
 }

@@ -22,14 +22,14 @@ Opcional: `PGSSL=true` si el proxy público exige SSL.
 ### Deploy
 
 1. Railway sigue apuntando a este repo. Al pushear `main` rebuilda solo.
-2. El build corre `vite build` y después `npm run db:migrate` (crea las tablas).
-3. Start command (ya está en `railway.json`): `node .output/server/index.mjs`
+2. El build corre `vite build`. Al arrancar, `npm start` aplica migraciones y levanta el server.
+3. Start command (ya está en `railway.json`): `npm start`
 
 Si el servicio todavía tiene settings de Next.js:
 
 - **Settings → Build**: Build Command = `npm run build`
-- **Settings → Deploy**: Start Command = `node .output/server/index.mjs`
-- Node 20+
+- **Settings → Deploy**: Start Command = `npm start`
+- Node 22+
 
 La primera migración **borra** las tablas viejas de Prisma y crea el schema nuevo, con seed de ejemplo. Tus rows de la versión anterior no se migran.
 
