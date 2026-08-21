@@ -13,6 +13,7 @@ export function netWorthUsd(p: {
   assets: Asset[];
   accounts: Account[];
   fx: Fx;
+  liabilities?: { balance: number; currency: string }[];
 }) {
   const assets = p.assets.reduce(
     (s, a) => s + toUsd(a.currentValue, a.currency, p.fx.average),
@@ -22,7 +23,11 @@ export function netWorthUsd(p: {
     (s, a) => s + toUsd(a.balance, a.currency, p.fx.average),
     0,
   );
-  return assets + cash;
+  const debt = (p.liabilities || []).reduce(
+    (s, l) => s + toUsd(l.balance, l.currency, p.fx.average),
+    0,
+  );
+  return assets + cash - debt;
 }
 
 export function monthlyRecurringUsd(items: RecurringIncome[], fxAvg: number) {
@@ -259,6 +264,56 @@ export function projectRecurring(
   return out.sort((a, b) => a.date.localeCompare(b.date));
 }
 
+const SCHEDULE_INCOME_TYPES = new Set([
+  "COUPON",
+  "RENT",
+  "DIVIDEND",
+  "INCOME",
+  "SELL",
+]);
+
+/** Future-dated schedule rows (ON cupon/amort) as projection events. */
+export function projectScheduledTxs(
+  transactions: Tx[],
+  fxAvg: number,
+  months = 12,
+): ProjectedEvent[] {
+  const today = new Date().toISOString().slice(0, 10);
+  const end = addMonths(today, months);
+  const out: ProjectedEvent[] = [];
+  for (const t of transactions) {
+    if (t.date < today || t.date > end) continue;
+    if (!SCHEDULE_INCOME_TYPES.has(t.type)) continue;
+    const amountUsd = toUsd(t.amount, t.currency, fxAvg);
+    if (amountUsd <= 0) continue;
+    out.push({
+      date: t.date,
+      name: t.description,
+      amountUsd,
+      frequency: "SCHEDULED",
+      assetId: t.assetId || "",
+    });
+  }
+  return out;
+}
+
+/** Merge recurring + future schedule transactions for charts. */
+export function projectCashflow(
+  recurring: RecurringIncome[],
+  transactions: Tx[],
+  fxAvg: number,
+  months = 12,
+): ProjectedEvent[] {
+  const fromRec = projectRecurring(recurring, fxAvg, months);
+  const fromTx = projectScheduledTxs(transactions, fxAvg, months);
+  const key = (e: ProjectedEvent) =>
+    `${e.date}|${e.name}|${e.amountUsd.toFixed(2)}|${e.assetId}`;
+  const map = new Map<string, ProjectedEvent>();
+  for (const e of fromRec) map.set(key(e), e);
+  for (const e of fromTx) map.set(key(e), e);
+  return [...map.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
 export function incomeNextDays(events: ProjectedEvent[], days: number) {
   const today = new Date().toISOString().slice(0, 10);
   const end = addDays(today, days);
@@ -430,7 +485,13 @@ export function computeDashboard(p: Portfolio) {
     0,
   );
   const pnl = assetsUsd - costUsd;
-  const monthly = monthlyRecurringUsd(p.recurring, p.fx.average);
+  const monthlyFromRecurring = monthlyRecurringUsd(p.recurring, p.fx.average);
+  const projected = projectCashflow(p.recurring, p.transactions, p.fx.average, 12);
+  const scheduled12m = projected.reduce((s, e) => s + e.amountUsd, 0);
+  const monthly =
+    scheduled12m / 12 > monthlyFromRecurring * 1.05
+      ? scheduled12m / 12
+      : monthlyFromRecurring;
   const yieldPct = incomeYield(monthly, nw);
   const reYield = realEstateYield(p.assets, p.recurring, p.fx.average);
   const holdings = rankedHoldings(p.assets, p.accounts, p.fx.average, nw);
@@ -439,7 +500,6 @@ export function computeDashboard(p: Portfolio) {
   const liq = liquiditySplit(p.assets, p.accounts, p.fx.average);
   const byType = pnlByType(p.assets, p.fx.average);
   const { alloc, total: allocTotal } = allocationBuckets(p.assets, p.accounts, p.fx.average);
-  const projected = projectRecurring(p.recurring, p.fx.average, 12);
   const next30 = incomeNextDays(projected, 30);
   const next90 = incomeNextDays(projected, 90);
   const projMonths = monthlyProjectionBuckets(projected, 12);
