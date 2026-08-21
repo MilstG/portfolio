@@ -15,8 +15,20 @@ import type {
   Portfolio,
   RecurringIncome,
   Snapshot,
+  TaxLot,
   Tx,
+  WatchItem,
 } from "@/lib/types";
+export {
+  upsertLiability,
+  deleteLiability,
+  importTransactionsCsv,
+  upsertTaxLot,
+  deleteTaxLot,
+  upsertWatchItem,
+  deleteWatchItem,
+  refreshWatchlistPrices,
+} from "@/lib/server/extra-actions";
 import { num } from "@/lib/utils";
 
 function mapAsset(r: Record<string, unknown>): Asset {
@@ -47,6 +59,7 @@ function mapAccount(r: Record<string, unknown>): Account {
 }
 
 function mapRec(r: Record<string, unknown>): RecurringIncome {
+  const dir = String(r.direction || "INCOME").toUpperCase();
   return {
     id: String(r.id),
     assetId: String(r.asset_id),
@@ -57,6 +70,31 @@ function mapRec(r: Record<string, unknown>): RecurringIncome {
     nextDate: String(r.next_date).slice(0, 10),
     notes: r.notes == null ? null : String(r.notes),
     accountId: r.account_id == null ? null : String(r.account_id),
+    direction: dir === "EXPENSE" ? "EXPENSE" : "INCOME",
+  };
+}
+
+function mapTaxLot(r: Record<string, unknown>): TaxLot {
+  return {
+    id: String(r.id),
+    assetId: String(r.asset_id),
+    quantity: num(r.quantity),
+    costPerUnit: num(r.cost_per_unit),
+    currency: String(r.currency),
+    purchasedAt: String(r.purchased_at).slice(0, 10),
+    notes: r.notes == null ? null : String(r.notes),
+  };
+}
+
+function mapWatch(r: Record<string, unknown>): WatchItem {
+  return {
+    id: String(r.id),
+    ticker: String(r.ticker),
+    name: r.name == null ? null : String(r.name),
+    type: String(r.type),
+    lastPrice: r.last_price == null ? null : num(r.last_price),
+    currency: String(r.currency || "USD"),
+    notes: r.notes == null ? null : String(r.notes),
   };
 }
 
@@ -154,6 +192,9 @@ async function applyDueRecurringInner() {
     let guard = 0;
     while (cursor <= today && guard < 36) {
       const txId = crypto.randomUUID();
+      const signed =
+        rec.direction === "EXPENSE" ? -Math.abs(rec.amount) : Math.abs(rec.amount);
+      const txType = rec.direction === "EXPENSE" ? "EXPENSE" : "INCOME";
       await sql.query(
         `insert into transactions (id, date, description, amount, currency, type, category, asset_id, account_id)
          values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
@@ -161,9 +202,9 @@ async function applyDueRecurringInner() {
           txId,
           cursor,
           rec.name,
-          rec.amount,
+          signed,
           rec.currency,
-          "INCOME",
+          txType,
           rec.frequency,
           rec.assetId,
           rec.accountId,
@@ -172,7 +213,7 @@ async function applyDueRecurringInner() {
       if (rec.accountId) {
         await sql.query(
           `update accounts set balance = balance + $1, updated_at = now() where id = $2`,
-          [rec.amount, rec.accountId],
+          [signed, rec.accountId],
         );
       }
       cursor = stepFrequency(cursor, rec.frequency);
@@ -199,7 +240,7 @@ async function loadPortfolioInner(): Promise<Portfolio> {
     sql`select * from assets order by current_value desc`,
     sql`select * from accounts order by name`,
     sql`select * from recurring_incomes order by next_date`,
-    sql`select * from transactions order by date desc, created_at desc limit 80`,
+    sql`select * from transactions order by date desc, created_at desc limit 500`,
     sql`select date, total_usd from snapshots order by date asc`,
     loadFx(),
   ]);
@@ -216,6 +257,12 @@ async function loadPortfolioInner(): Promise<Portfolio> {
   );
   const settingsRows = await safeQuery(
     () => sql`select pin_hash is not null as has_pin, pin_enabled from app_settings where id = 1`,
+  );
+  const taxLotRows = await safeQuery(
+    () => sql`select * from tax_lots order by purchased_at desc`,
+  );
+  const watchRows = await safeQuery(
+    () => sql`select * from watchlist order by ticker`,
   );
 
   const settings: AppSettings = {
@@ -256,17 +303,16 @@ async function loadPortfolioInner(): Promise<Portfolio> {
       },
     ),
     settings,
+    taxLots: taxLotRows.map(mapTaxLot),
+    watchlist: watchRows.map(mapWatch),
   };
 }
 
+/** netWorthUsd already subtracts liabilities — do not subtract twice. */
 async function writeTodaySnapshot() {
   const sql = await getSql();
   const portfolio = await loadPortfolioInner();
-  const liabilityUsd = portfolio.liabilities.reduce(
-    (s, l) => s + (l.currency === "ARS" ? l.balance / portfolio.fx.average : l.balance),
-    0,
-  );
-  const total = netWorthUsd(portfolio) - liabilityUsd;
+  const total = netWorthUsd(portfolio);
   const today = new Date().toISOString().slice(0, 10);
   await sql.query(
     `insert into snapshots (date, total_usd) values ($1, $2)
@@ -293,7 +339,14 @@ export const getAsset = createServerFn({ method: "GET" })
     if (!rows[0]) return null;
     const rec =
       await sql`select * from recurring_incomes where asset_id = ${data.id} order by next_date`;
-    return { asset: mapAsset(rows[0]), recurring: rec.map(mapRec) };
+    const lots = await safeQuery(
+      () => sql`select * from tax_lots where asset_id = ${data.id} order by purchased_at`,
+    );
+    return {
+      asset: mapAsset(rows[0]),
+      recurring: rec.map(mapRec),
+      taxLots: lots.map(mapTaxLot),
+    };
   });
 
 const assetInput = z.object({
@@ -413,6 +466,7 @@ const recInput = z.object({
   frequency: z.string(),
   nextDate: z.string(),
   notes: z.string().optional().nullable(),
+  direction: z.enum(["INCOME", "EXPENSE"]).optional(),
 });
 
 export const upsertRecurring = createServerFn({ method: "POST" })
@@ -420,9 +474,10 @@ export const upsertRecurring = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const sql = await getSql();
     const id = data.id || crypto.randomUUID();
+    const direction = data.direction === "EXPENSE" ? "EXPENSE" : "INCOME";
     await sql.query(
-      `insert into recurring_incomes (id, asset_id, account_id, name, amount, currency, frequency, next_date, notes)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      `insert into recurring_incomes (id, asset_id, account_id, name, amount, currency, frequency, next_date, notes, direction)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
        on conflict (id) do update set
          asset_id = excluded.asset_id,
          account_id = excluded.account_id,
@@ -431,17 +486,19 @@ export const upsertRecurring = createServerFn({ method: "POST" })
          currency = excluded.currency,
          frequency = excluded.frequency,
          next_date = excluded.next_date,
-         notes = excluded.notes`,
+         notes = excluded.notes,
+         direction = excluded.direction`,
       [
         id,
         data.assetId,
         data.accountId || null,
         data.name.trim(),
-        data.amount,
+        Math.abs(data.amount),
         data.currency,
         data.frequency,
         data.nextDate,
         data.notes || null,
+        direction,
       ],
     );
     return { id };
@@ -569,7 +626,6 @@ export const snapshotNow = createServerFn({ method: "POST" }).handler(async () =
   return { ok: true };
 });
 
-/** Set or clear the app password. Pass null/empty to disable. */
 export const setPin = createServerFn({ method: "POST" })
   .validator(
     z.object({
@@ -578,7 +634,6 @@ export const setPin = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const sql = await getSql();
-    // ensure row exists
     await sql.query(
       `insert into app_settings (id, pin_enabled) values (1, false)
        on conflict (id) do nothing`,
@@ -597,7 +652,6 @@ export const setPin = createServerFn({ method: "POST" })
     return { ok: true, enabled: true };
   });
 
-/** Verify the password entered on the lock screen. */
 export const verifyPin = createServerFn({ method: "POST" })
   .validator(z.object({ pin: z.string() }))
   .handler(async ({ data }) => {
@@ -610,8 +664,6 @@ export const verifyPin = createServerFn({ method: "POST" })
     const hash = await sha256(data.pin);
     return { ok: hash === String(row.pin_hash) };
   });
-
-/* ─── Goals ─────────────────────────────────────────────────────────────── */
 
 const goalInput = z.object({
   id: z.string().optional(),
@@ -652,8 +704,6 @@ export const deleteGoal = createServerFn({ method: "POST" })
     await sql`delete from goals where id = ${data.id}`;
     return { ok: true };
   });
-
-/* ─── Alloc targets ─────────────────────────────────────────────────────── */
 
 const allocTargetInput = z.object({
   assetType: z.string().min(1),
