@@ -22,6 +22,7 @@ import { Tip } from "@/components/ui/tip";
 import { Pager, usePager } from "@/components/ui/pager";
 import { RangeSelect, useRange } from "@/components/ui/range";
 import { AssetLink, TipRow } from "@/components/ui/asset-link";
+import { SortHeader, useSort } from "@/components/ui/sort";
 import { getPortfolio } from "@/lib/server/portfolio";
 import { computeAnalytics } from "@/lib/analytics";
 import { portfolioReturn } from "@/lib/returns";
@@ -293,7 +294,23 @@ function Dashboard() {
     return { total, avg: total / rows.length, peak, payments };
   }, [a.calendarStacked, a.calendar]);
 
-  const holdingsPager = usePager(s.holdings, 10);
+  const holdingsSort = useSort(
+    s.holdings,
+    useMemo(
+      () => ({
+        name: (h: (typeof s.holdings)[number]) => h.name.toLowerCase(),
+        type: (h: (typeof s.holdings)[number]) => h.type,
+        cost: (h: (typeof s.holdings)[number]) => h.costUsd,
+        value: (h: (typeof s.holdings)[number]) => h.valueUsd,
+        pnl: (h: (typeof s.holdings)[number]) => h.pnlUsd,
+        pnlPct: (h: (typeof s.holdings)[number]) => h.pnlPct,
+        weight: (h: (typeof s.holdings)[number]) => h.weight,
+      }),
+      [],
+    ),
+    "value",
+  );
+  const holdingsPager = usePager(holdingsSort.sorted, 10);
   const couponsPager = usePager(a.coupons, 10);
   const amortsPager = usePager(a.amorts, 10);
   const bondYieldsPager = usePager(bonds, 10);
@@ -656,20 +673,74 @@ function Dashboard() {
               title="HOLDINGS RANK"
               emphasis="primary"
               action={
-                <HelpTip content="Activos ordenados por valor. P&L vs cost basis. WGT = peso sobre el net worth." />
+                <HelpTip content="Clic en cualquier columna para reordenar. P&L vs cost basis, WGT = peso sobre el net worth. Ordenando por P&L o por % cubre lo mismo que los paneles P&L CONTRIBUTION y COST LADDER." />
               }
             >
               <TableWrap>
-                <table className="w-full min-w-[640px] border-collapse font-mono text-[12px]">
+                <table className="w-full border-collapse font-mono text-[12px] md:min-w-[640px]">
                   <thead>
                     <tr className="border-b border-line text-left text-[11px] text-muted">
-                      <th className="py-1 pr-2">#</th>
-                      <th className="py-1 pr-2">NAME</th>
-                      <th className="py-1 pr-2">TYPE</th>
-                      <th className="py-1 pr-2 text-right">VALUE</th>
-                      <th className="py-1 pr-2 text-right">P&L</th>
-                      <th className="py-1 pr-2 text-right">%</th>
-                      <th className="py-1 text-right">WGT</th>
+                      <th className="hidden py-1 pr-2 sm:table-cell">#</th>
+                      <SortHeader
+                        label="NAME"
+                        sortKey="name"
+                        active={holdingsSort.key}
+                        dir={holdingsSort.dir}
+                        onSort={holdingsSort.toggle}
+                        naturalDir="asc"
+                      />
+                      <SortHeader
+                        label="TYPE"
+                        sortKey="type"
+                        active={holdingsSort.key}
+                        dir={holdingsSort.dir}
+                        onSort={holdingsSort.toggle}
+                        naturalDir="asc"
+                        className="hidden md:table-cell"
+                      />
+                      <SortHeader
+                        label="COST"
+                        sortKey="cost"
+                        active={holdingsSort.key}
+                        dir={holdingsSort.dir}
+                        onSort={holdingsSort.toggle}
+                        align="right"
+                        className="hidden md:table-cell"
+                      />
+                      <SortHeader
+                        label="VALUE"
+                        sortKey="value"
+                        active={holdingsSort.key}
+                        dir={holdingsSort.dir}
+                        onSort={holdingsSort.toggle}
+                        align="right"
+                      />
+                      <SortHeader
+                        label="P&L"
+                        sortKey="pnl"
+                        active={holdingsSort.key}
+                        dir={holdingsSort.dir}
+                        onSort={holdingsSort.toggle}
+                        align="right"
+                        className="hidden sm:table-cell"
+                      />
+                      <SortHeader
+                        label="%"
+                        sortKey="pnlPct"
+                        active={holdingsSort.key}
+                        dir={holdingsSort.dir}
+                        onSort={holdingsSort.toggle}
+                        align="right"
+                      />
+                      <SortHeader
+                        label="WGT"
+                        sortKey="weight"
+                        active={holdingsSort.key}
+                        dir={holdingsSort.dir}
+                        onSort={holdingsSort.toggle}
+                        align="right"
+                        className="hidden sm:table-cell pr-0"
+                      />
                     </tr>
                   </thead>
                   <tbody>
@@ -678,7 +749,7 @@ function Dashboard() {
                         key={h.id}
                         className="border-b border-line/50 hover:bg-raised/40"
                       >
-                        <td className="py-1 pr-2 text-subtle">
+                        <td className="hidden py-1 pr-2 text-subtle sm:table-cell">
                           {holdingsPager.from + i}
                         </td>
                         <td className="py-1 pr-2">
@@ -689,12 +760,17 @@ function Dashboard() {
                             tip={describeAsset(h.id)}
                           />
                         </td>
-                        <td className="py-1 pr-2 text-muted">{h.type}</td>
+                        <td className="hidden py-1 pr-2 text-muted md:table-cell">
+                          {h.type}
+                        </td>
+                        <td className="hidden py-1 pr-2 text-right tabular-nums text-muted md:table-cell">
+                          {formatUsd(h.costUsd)}
+                        </td>
                         <td className="py-1 pr-2 text-right tabular-nums">
                           {formatUsd(h.valueUsd)}
                         </td>
                         <td
-                          className={`py-1 pr-2 text-right tabular-nums ${h.pnlUsd >= 0 ? "text-gain" : "text-loss"}`}
+                          className={`hidden py-1 pr-2 text-right tabular-nums sm:table-cell ${h.pnlUsd >= 0 ? "text-gain" : "text-loss"}`}
                         >
                           {formatUsd(h.pnlUsd)}
                         </td>
@@ -703,7 +779,7 @@ function Dashboard() {
                         >
                           {formatPct(h.pnlPct)}
                         </td>
-                        <td className="py-1 text-right tabular-nums text-subtle">
+                        <td className="hidden py-1 text-right tabular-nums text-subtle sm:table-cell">
                           {h.weight.toFixed(1)}%
                         </td>
                       </tr>
@@ -1065,15 +1141,21 @@ function Dashboard() {
               }
             >
               <TableWrap>
-                <table className="w-full min-w-[520px] border-collapse font-mono text-[12px]">
+                <table className="w-full border-collapse font-mono text-[12px] md:min-w-[520px]">
                   <thead>
                     <tr className="border-b border-line text-left text-[11px] text-muted">
                       <th className="py-1 pr-2">BOND</th>
                       <th className="py-1 pr-2 text-right">VALUE</th>
-                      <th className="py-1 pr-2 text-right">CUR</th>
+                      <th className="hidden py-1 pr-2 text-right sm:table-cell">
+                        CUR
+                      </th>
                       <th className="py-1 pr-2 text-right">YTM</th>
-                      <th className="py-1 pr-2 text-right">DUR</th>
-                      <th className="py-1 text-right">VTO</th>
+                      <th className="hidden py-1 pr-2 text-right sm:table-cell">
+                        DUR
+                      </th>
+                      <th className="hidden py-1 text-right md:table-cell">
+                        VTO
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1092,7 +1174,7 @@ function Dashboard() {
                         <td className="py-1 pr-2 text-right tabular-nums">
                           {formatUsd(b.priceUsd)}
                         </td>
-                        <td className="py-1 pr-2 text-right tabular-nums text-muted">
+                        <td className="hidden py-1 pr-2 text-right tabular-nums text-muted sm:table-cell">
                           {b.currentYield === null
                             ? "—"
                             : `${(b.currentYield * 100).toFixed(1)}%`}
@@ -1102,12 +1184,12 @@ function Dashboard() {
                             ? "—"
                             : `${(b.ytm * 100).toFixed(1)}%`}
                         </td>
-                        <td className="py-1 pr-2 text-right tabular-nums text-muted">
+                        <td className="hidden py-1 pr-2 text-right tabular-nums text-muted sm:table-cell">
                           {b.modified === null
                             ? "—"
                             : `${b.modified.toFixed(1)}a`}
                         </td>
-                        <td className="py-1 text-right tabular-nums text-subtle">
+                        <td className="hidden py-1 text-right tabular-nums text-subtle md:table-cell">
                           {b.maturity ? b.maturity.slice(2, 7) : "—"}
                         </td>
                       </tr>
@@ -1726,12 +1808,16 @@ function Dashboard() {
                   </div>
 
                   <TableWrap className="min-w-0 flex-1">
-                    <table className="w-full min-w-[420px] border-collapse font-mono text-[12px]">
+                    <table className="w-full border-collapse font-mono text-[12px] md:min-w-[420px]">
                       <thead>
                         <tr className="border-b border-line text-left text-[11px] text-muted">
                           <th className="py-1 pr-2">NAME</th>
-                          <th className="py-1 pr-2 text-right">AÑOS</th>
-                          <th className="py-1 pr-2 text-right">INGRESOS</th>
+                          <th className="hidden py-1 pr-2 text-right sm:table-cell">
+                            AÑOS
+                          </th>
+                          <th className="hidden py-1 pr-2 text-right sm:table-cell">
+                            INGRESOS
+                          </th>
                           <th className="py-1 text-right">ANUAL</th>
                         </tr>
                       </thead>
@@ -1748,12 +1834,12 @@ function Dashboard() {
                                 tip={describeAsset(r.id)}
                               />
                             </td>
-                            <td className="py-1 pr-2 text-right tabular-nums text-muted">
+                            <td className="hidden py-1 pr-2 text-right tabular-nums text-muted sm:table-cell">
                               {r.holdingYears === null
                                 ? "—"
                                 : r.holdingYears.toFixed(1)}
                             </td>
-                            <td className="py-1 pr-2 text-right tabular-nums text-muted">
+                            <td className="hidden py-1 pr-2 text-right tabular-nums text-muted sm:table-cell">
                               {r.incomeUsd > 0 ? formatUsd(r.incomeUsd) : "—"}
                             </td>
                             <td

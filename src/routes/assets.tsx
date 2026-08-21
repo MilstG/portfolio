@@ -77,16 +77,22 @@ function AssetsPage() {
 
       <Monitor title="POSITIONS" bodyClassName="p-0">
         <TableWrap className="mx-0 px-0">
-          <table className="w-full min-w-[640px] font-mono text-[12px]">
+          <table className="w-full font-mono text-[12px] md:min-w-[640px]">
             <thead>
               <tr className="border-b border-border text-left text-[11px] tracking-widest text-accent">
                 <th className="px-2 py-1.5">NAME</th>
-                <th className="px-2 py-1.5">TYPE</th>
-                <th className="px-2 py-1.5 text-right">QTY</th>
-                <th className="px-2 py-1.5 text-right">COST</th>
+                <th className="hidden px-2 py-1.5 md:table-cell">TYPE</th>
+                <th className="hidden px-2 py-1.5 text-right lg:table-cell">
+                  QTY
+                </th>
+                <th className="hidden px-2 py-1.5 text-right md:table-cell">
+                  COST
+                </th>
                 <th className="px-2 py-1.5 text-right">VALUE</th>
                 <th className="px-2 py-1.5 text-right">P&L</th>
-                <th className="px-2 py-1.5 text-right">WGT</th>
+                <th className="hidden px-2 py-1.5 text-right sm:table-cell">
+                  WGT
+                </th>
                 <th className="px-2 py-1.5" />
               </tr>
             </thead>
@@ -115,13 +121,15 @@ function AssetsPage() {
                         ) : null}
                       </Link>
                     </td>
-                    <td className="px-2 py-1.5 text-muted">{typeLabel}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-muted">
+                    <td className="hidden px-2 py-1.5 text-muted md:table-cell">
+                      {typeLabel}
+                    </td>
+                    <td className="hidden px-2 py-1.5 text-right tabular-nums text-muted lg:table-cell">
                       {a.quantity != null && a.quantity !== 1
                         ? a.quantity
                         : "—"}
                     </td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-muted">
+                    <td className="hidden px-2 py-1.5 text-right tabular-nums text-muted md:table-cell">
                       {formatUsd(costUsd)}
                     </td>
                     <td className="px-2 py-1.5 text-right tabular-nums">
@@ -130,12 +138,12 @@ function AssetsPage() {
                     <td
                       className={`px-2 py-1.5 text-right tabular-nums ${pnl >= 0 ? "text-gain" : "text-loss"}`}
                     >
-                      {formatUsd(pnl)}{" "}
-                      <span className="text-[11px] opacity-80">
+                      {formatUsd(pnl)}
+                      <span className="block text-[11px] opacity-80 sm:ml-1 sm:inline">
                         {formatPct(pnlPct)}
                       </span>
                     </td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-subtle">
+                    <td className="hidden px-2 py-1.5 text-right tabular-nums text-subtle sm:table-cell">
                       {totalUsd > 0
                         ? ((valueUsd / totalUsd) * 100).toFixed(1)
                         : 0}
