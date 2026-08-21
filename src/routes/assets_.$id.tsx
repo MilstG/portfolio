@@ -4,6 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { AssetForm } from "@/components/asset-form";
 import { ConfirmDelete } from "@/components/confirm-delete";
+import { Pager, usePager } from "@/components/pager";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Field, Input, Select } from "@/components/ui/input";
@@ -35,6 +36,8 @@ function AssetDetail() {
   const [recDate, setRecDate] = useState("");
   const [recCur, setRecCur] = useState("USD");
 
+  const recPager = usePager(data?.recurring ?? [], 10);
+
   if (!data) {
     return (
       <div className="mx-auto max-w-3xl">
@@ -47,7 +50,9 @@ function AssetDetail() {
   }
 
   const { asset, recurring } = data;
-  const pnl = asset.costBasis ? ((asset.currentValue - asset.costBasis) / asset.costBasis) * 100 : 0;
+  const pnl = asset.costBasis
+    ? ((asset.currentValue - asset.costBasis) / asset.costBasis) * 100
+    : 0;
   const typeLabel = ASSET_TYPES.find((t) => t.value === asset.type)?.label ?? asset.type;
 
   return (
@@ -99,36 +104,54 @@ function AssetDetail() {
         {recurring.length === 0 ? (
           <p className="py-6 text-sm text-muted">Nada programado. Alquileres y cupones van acá.</p>
         ) : (
-          <ul className="divide-y divide-border">
-            {recurring.map((r) => (
-              <li key={r.id} className="flex items-center justify-between py-3">
-                <div>
-                  <p className="text-sm text-fg">{r.name}</p>
-                  <p className="text-xs text-subtle">
-                    {formatUsd(r.amount)} · {FREQUENCIES.find((f) => f.value === r.frequency)?.label} · próximo {r.nextDate}
-                  </p>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="Eliminar ingreso"
-                  onClick={async () => {
-                    await deleteRecurring({ data: { id: r.id } });
-                    toast.success("Ingreso eliminado");
-                    await router.invalidate();
-                  }}
-                >
-                  <Trash2 className="size-4 text-loss" />
-                </Button>
-              </li>
-            ))}
-          </ul>
+          <>
+            <ul className="divide-y divide-border">
+              {recPager.slice.map((r) => (
+                <li key={r.id} className="flex items-center justify-between py-3">
+                  <div>
+                    <p className="text-sm text-fg">{r.name}</p>
+                    <p className="text-xs text-subtle">
+                      {formatUsd(r.amount)} ·{" "}
+                      {FREQUENCIES.find((f) => f.value === r.frequency)?.label} · próximo{" "}
+                      {r.nextDate}
+                    </p>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Eliminar ingreso"
+                    onClick={async () => {
+                      await deleteRecurring({ data: { id: r.id } });
+                      toast.success("Ingreso eliminado");
+                      await router.invalidate();
+                    }}
+                  >
+                    <Trash2 className="size-4 text-loss" />
+                  </Button>
+                </li>
+              ))}
+            </ul>
+            <Pager
+              page={recPager.page}
+              totalPages={recPager.totalPages}
+              total={recPager.total}
+              from={recPager.from}
+              to={recPager.to}
+              onChange={recPager.setPage}
+            />
+          </>
         )}
       </section>
 
+      {asset.notes ? (
+        <section className="mt-6 rounded-none border border-border bg-surface p-5">
+          <h2 className="text-sm font-medium">Notas</h2>
+          <p className="mt-2 whitespace-pre-wrap text-sm text-muted">{asset.notes}</p>
+        </section>
+      ) : null}
+
       {edit ? (
         <AssetForm
-          key={asset.id}
           open
           initial={asset}
           pending={pending}
@@ -136,10 +159,12 @@ function AssetDetail() {
           onSubmit={async (payload) => {
             setPending(true);
             try {
-              await upsertAsset({ data: { ...payload, id: asset.id } });
+              await upsertAsset({ data: payload });
               toast.success("Guardado");
               setEdit(false);
               await router.invalidate();
+            } catch (e) {
+              toast.error(e instanceof Error ? e.message : "Error");
             } finally {
               setPending(false);
             }
@@ -192,7 +217,13 @@ function AssetDetail() {
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Monto">
-              <Input required type="number" step="any" value={recAmount} onChange={(e) => setRecAmount(e.target.value)} />
+              <Input
+                required
+                type="number"
+                step="any"
+                value={recAmount}
+                onChange={(e) => setRecAmount(e.target.value)}
+              />
             </Field>
             <Field label="Moneda">
               <Select value={recCur} onChange={(e) => setRecCur(e.target.value)}>
