@@ -40,6 +40,40 @@ isNull(xirr([{date:'2020-01-01',amount:-1000},{date:'2020-01-01',amount:1100}]),
 isNull(xirr([]), 'vacio');
 
 
+// ---- ventana corta ----
+// Anualizar unas semanas convierte un movimiento chico en una tasa enorme:
+// +5% en 36 dias se lee como +65%/año, que es aritmetica, no informacion.
+{
+  const { portfolioReturn } = await server.ssrLoadModule('/src/lib/returns.ts');
+  const mk = (purchaseDate, cost, value) => ({
+    assets: [{ id:'a', name:'A', ticker:'A', type:'STOCK', quantity:1,
+      costBasis:cost, currentValue:value, currency:'USD', purchaseDate, notes:null,
+      priceId:null, unpriced:false }],
+    accounts:[], recurring:[], transactions:[], snapshots:[],
+    fx:{official:1,blue:1,mep:1,average:1}, liabilities:[], goals:[],
+    allocTargets:[], fxHistory:[], settings:{pinEnabled:false,hasPin:false},
+    taxLots:[], watchlist:[], lastPriceRun:null,
+  });
+  // 36 dias, +5%: no debe anualizar ni encabezar con la extrapolacion
+  const corto = portfolioReturn(mk('2026-07-16', 1000, 1050), '2026-08-21');
+  console.log(corto.annualised === null || !corto.annualisedLeads ? 'PASS' : 'FAIL',
+    'ventana corta no encabeza anualizado ->',
+    'anual', corto.annualised, 'lidera', corto.annualisedLeads,
+    'span', corto.spanYears.toFixed(3));
+  if (!(corto.annualised === null || !corto.annualisedLeads)) fail++;
+  near(corto.simple, 0.05, 1e-9, 'ventana corta: total +5%');
+
+  // 10 dias: ni siquiera se calcula
+  const muyCorto = portfolioReturn(mk('2026-08-11', 1000, 1050), '2026-08-21');
+  isNull(muyCorto.annualised, 'menos de 30 dias no anualiza');
+
+  // 3 años: aca si el anualizado es una medicion
+  const largo = portfolioReturn(mk('2023-08-21', 1000, 1400), '2026-08-21');
+  console.log(largo.annualisedLeads ? 'PASS' : 'FAIL', 'ventana larga encabeza anualizado ->',
+    largo.annualised && (largo.annualised*100).toFixed(2)+'%');
+  if (!largo.annualisedLeads) fail++;
+}
+
 // ---- bondMetrics ----
 const { bondMetrics } = await server.ssrLoadModule('/src/lib/bonds.ts');
 const asset = (id, value) => ({ id, name:id, ticker:id, type:'BOND', quantity:1,
@@ -168,6 +202,40 @@ eq(px.pickCoin({coins:[
   {id:'sin-rank', symbol:'GP'},
   {id:'con-rank', symbol:'GP', market_cap_rank:120},
 ]}, 'gp'), 'con-rank', 'cripto: rankeado le gana al sin rank');
+
+// un id fijado a mano se usa tal cual, sin pasar por el buscador
+{
+  const id = await px.resolveCoinId('graphite-protocol');
+  const ok = id === 'graphite-protocol';
+  console.log(ok ? 'PASS' : 'FAIL', 'cripto: id fijado se respeta ->', id);
+  if (!ok) fail++;
+}
+{
+  const id = await px.resolveCoinId('BTC');
+  const ok = id === 'bitcoin';
+  console.log(ok ? 'PASS' : 'FAIL', 'cripto: override de simbolo ->', id);
+  if (!ok) fail++;
+}
+
+// contract address: la unica forma inequivoca de identificar un token
+eq(px.classifyPriceKey('31k88G5Mq7ptbRDf3AM13HAq6wRQHXHikR8hik7wPygk'),
+   {kind:'contract', chain:'solana', address:'31k88G5Mq7ptbRDf3AM13HAq6wRQHXHikR8hik7wPygk'},
+   'clave: address de solana');
+eq(px.classifyPriceKey('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'),
+   {kind:'contract', chain:'ethereum', address:'0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'},
+   'clave: address EVM');
+eq(px.classifyPriceKey('solana:31k88G5Mq7ptbRDf3AM13HAq6wRQHXHikR8hik7wPygk'),
+   {kind:'contract', chain:'solana', address:'31k88G5Mq7ptbRDf3AM13HAq6wRQHXHikR8hik7wPygk'},
+   'clave: chain explicita');
+eq(px.classifyPriceKey('graphite-protocol'), {kind:'id', value:'graphite-protocol'}, 'clave: id de coingecko');
+eq(px.classifyPriceKey('BTC'), {kind:'symbol', value:'BTC'}, 'clave: simbolo');
+eq(px.classifyPriceKey('  '), null, 'clave: vacia');
+
+eq(px.parseTokenPrice({'31k88G5Mq7ptbRDf3AM13HAq6wRQHXHikR8hik7wPygk':{usd:0.0123}},
+   '31k88G5Mq7ptbRDf3AM13HAq6wRQHXHikR8hik7wPygk'), 0.0123, 'token: precio');
+eq(px.parseTokenPrice({'0xABC':{usd:5}}, '0xabc'), 5, 'token: case-insensitive');
+eq(px.parseTokenPrice({}, '0xabc'), null, 'token: sin match');
+eq(px.parseTokenPrice(null, '0xabc'), null, 'token: nulo');
 
 // CEDEARs: cotizan en pesos y ya incluyen el ratio -> ARS / MEP = USD por unidad
 eq(px.parseCedearQuotes([{symbol:'ASTS', c:6608}]), {ASTS:6608}, 'cedear: precio ARS crudo');

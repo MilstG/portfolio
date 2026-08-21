@@ -158,8 +158,18 @@ export function assetReturns(
 }
 
 export type PortfolioReturn = {
-  /** Money-weighted annualised return across every dated position. */
+  /**
+   * Money-weighted annualised return across every dated position, or null when
+   * the flows are too recent to annualise.
+   */
   annualised: number | null;
+  /** Years from the earliest flow to today — how much history the rate rests on. */
+  spanYears: number;
+  /**
+   * Whether the annualised figure deserves to be the headline. Below a year it
+   * is an extrapolation from a short window, so the measured total leads.
+   */
+  annualisedLeads: boolean;
   /** Total return over the covered period, not annualised. */
   simple: number | null;
   costUsd: number;
@@ -213,8 +223,22 @@ export function portfolioReturn(
     .filter((r) => r.holdingYears === null || r.costUsd <= 0)
     .reduce((sum, r) => sum + r.valueUsd, 0);
 
+  // Same floor the per-asset rows use. Annualising a few weeks compounds a
+  // short-run move into a yearly rate: +5% over five weeks reads as +65%/yr,
+  // which is arithmetic, not information. Suppressing it per row and then
+  // printing it as the headline was inconsistent.
+  const firstFlow = flows.reduce<string | null>(
+    (min, f) => (min === null || f.date < min ? f.date : min),
+    null,
+  );
+  const spanYears = firstFlow ? years(firstFlow, today) : 0;
+
+  const rate = spanYears >= MIN_ANNUALISE_YEARS ? xirr(flows) : null;
+
   return {
-    annualised: xirr(flows),
+    annualised: rate,
+    spanYears,
+    annualisedLeads: spanYears >= 1 && rate !== null,
     simple: costUsd > 0 ? (valueUsd + incomeUsd - costUsd) / costUsd : null,
     costUsd,
     valueUsd,

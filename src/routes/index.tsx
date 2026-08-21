@@ -1800,7 +1800,7 @@ function Dashboard() {
                 <HelpTip content="Retorno money-weighted (XIRR, actual/365). Cada posición aporta su costo como egreso en la fecha de compra, los ingresos ya cobrados como entradas, y el valor actual como saldo final." />
               }
             >
-              {ret.annualised === null ? (
+              {ret.simple === null ? (
                 <p className="font-mono text-xs text-muted">
                   sin fecha de compra en ninguna posición — cargá purchaseDate
                   para calcular retorno
@@ -1808,17 +1808,36 @@ function Dashboard() {
               ) : (
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:gap-6">
                   <div className="shrink-0">
+                    {/* Under a year of history, the total return is the measured
+                        number and the annualised one is an extrapolation, so the
+                        total leads. */}
                     <p
                       className={`font-mono text-2xl font-medium tabular-nums md:text-3xl ${
-                        ret.annualised >= 0 ? "text-gain" : "text-loss"
+                        (ret.annualisedLeads
+                          ? (ret.annualised ?? 0)
+                          : ret.simple) >= 0
+                          ? "text-gain"
+                          : "text-loss"
                       }`}
                     >
-                      {formatPct(ret.annualised * 100)}
+                      {ret.annualisedLeads && ret.annualised !== null
+                        ? formatPct(ret.annualised * 100)
+                        : formatPct(ret.simple * 100)}
                     </p>
                     <p className="mt-1 font-mono text-[11px] text-subtle">
-                      anualizado · {ret.covered}/{ret.total} posiciones
+                      {ret.annualisedLeads ? "anualizado" : "total"} ·{" "}
+                      {ret.spanYears >= 1
+                        ? `${ret.spanYears.toFixed(1)} años`
+                        : `${Math.max(1, Math.round(ret.spanYears * 365))} días`}{" "}
+                      · {ret.covered}/{ret.total} posiciones
                     </p>
-                    {ret.simple !== null ? (
+                    {!ret.annualisedLeads ? (
+                      <p className="font-mono text-[11px] text-muted">
+                        {ret.annualised === null
+                          ? "muy poca historia para anualizar"
+                          : `${formatPct(ret.annualised * 100)} anualizado — extrapolado`}
+                      </p>
+                    ) : ret.simple !== null ? (
                       <p className="font-mono text-[11px] text-muted">
                         total {formatPct(ret.simple * 100)} sobre{" "}
                         {formatUsd(ret.costUsd)}

@@ -65,6 +65,7 @@ function mapAsset(r: Record<string, unknown>): Asset {
     purchaseDate:
       r.purchase_date == null ? null : String(r.purchase_date).slice(0, 10),
     notes: r.notes == null ? null : String(r.notes),
+    priceId: r.price_id == null ? null : String(r.price_id),
     unpriced,
   };
 }
@@ -434,6 +435,8 @@ const assetInput = z.object({
   currency,
   purchaseDate: isoDate.optional().nullable().or(z.literal("")),
   notes: longText.optional().nullable(),
+  /** Pins the upstream identifier when the ticker resolves to the wrong thing. */
+  priceId: z.string().trim().max(64).optional().nullable(),
 });
 
 export const upsertAsset = createServerFn({ method: "POST" })
@@ -443,8 +446,8 @@ export const upsertAsset = createServerFn({ method: "POST" })
     const sql = await getSql();
     const id = data.id || crypto.randomUUID();
     await sql.query(
-      `insert into assets (id, name, ticker, type, quantity, cost_basis, current_value, currency, purchase_date, notes, updated_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now())
+      `insert into assets (id, name, ticker, type, quantity, cost_basis, current_value, currency, purchase_date, notes, price_id, updated_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, now())
        on conflict (id) do update set
          name = excluded.name,
          ticker = excluded.ticker,
@@ -455,6 +458,7 @@ export const upsertAsset = createServerFn({ method: "POST" })
          currency = excluded.currency,
          purchase_date = excluded.purchase_date,
          notes = excluded.notes,
+         price_id = excluded.price_id,
          updated_at = now()`,
       [
         id,
@@ -467,6 +471,7 @@ export const upsertAsset = createServerFn({ method: "POST" })
         data.currency,
         data.purchaseDate || null,
         data.notes || null,
+        data.priceId?.trim() || null,
       ],
     );
     await writeTodaySnapshot();
@@ -511,6 +516,7 @@ export const upsertAccount = createServerFn({ method: "POST" })
          currency = excluded.currency,
          balance = excluded.balance,
          notes = excluded.notes,
+         price_id = excluded.price_id,
          updated_at = now()`,
       [
         id,
@@ -756,19 +762,29 @@ async function currentMep(sql: Awaited<ReturnType<typeof getSql>>) {
 export async function runPriceRefresh() {
   const sql = await getSql();
   const assets =
-    await sql`select id, ticker, type, quantity, current_value from assets`;
+    await sql`select id, name, ticker, type, quantity, current_value, price_id from assets`;
+  // A pinned price_id wins over the ticker: it is the escape hatch for a symbol
+  // that resolves to the wrong coin, or to none at all.
+  const priceKey = (a: Record<string, unknown>) =>
+    (a.price_id ? String(a.price_id) : String(a.ticker ?? "")).trim();
+
   const cryptoTickers = assets
-    .filter((a) => String(a.type) === "CRYPTO" && a.ticker)
-    .map((a) => String(a.ticker).toUpperCase());
+    .filter((a) => String(a.type) === "CRYPTO" && priceKey(a))
+    .map((a) => priceKey(a));
   const stockTickers = assets
-    .filter((a) => String(a.type) === "STOCK" && a.ticker)
-    .map((a) => String(a.ticker).toUpperCase());
+    .filter((a) => String(a.type) === "STOCK" && priceKey(a))
+    .map((a) => priceKey(a).toUpperCase());
   const bondTickers = assets
-    .filter((a) => String(a.type) === "BOND" && a.ticker)
-    .map((a) => String(a.ticker).toUpperCase());
+    .filter((a) => String(a.type) === "BOND" && priceKey(a))
+    .map((a) => priceKey(a).toUpperCase());
   const cedearTickers = assets
-    .filter((a) => String(a.type) === "CEDEAR" && a.ticker)
-    .map((a) => String(a.ticker).toUpperCase());
+    .filter((a) => String(a.type) === "CEDEAR" && priceKey(a))
+    .map((a) => priceKey(a).toUpperCase());
+  // Ask the CEDEAR feed about plain STOCK tickers as well: a holding typed
+  // STOCK that Yahoo does not know (BRKB, whose US symbol is BRK-B) is almost
+  // always a CEDEAR. Yahoo still wins when it answers, so a real US position is
+  // unaffected.
+  const cedearLookup = [...new Set([...cedearTickers, ...stockTickers])];
 
   // FX first: CEDEARs quote in pesos, so their USD price depends on MEP.
   const fx = await fetchDolarRates();
@@ -778,7 +794,7 @@ export async function runPriceRefresh() {
     fetchCryptoUsd(cryptoTickers),
     fetchStockUsd(stockTickers),
     fetchArgBondFactors(bondTickers),
-    fetchCedearUsd(cedearTickers, mepRate),
+    fetchCedearUsd(cedearLookup, mepRate),
   ]);
 
   const ids: string[] = [];
@@ -795,7 +811,8 @@ export async function runPriceRefresh() {
       type === "CEDEAR";
     if (!tracked) continue;
 
-    const ticker = a.ticker ? String(a.ticker).toUpperCase() : null;
+    const key = priceKey(a);
+    const ticker = key ? key.toUpperCase() : null;
     const label = String(a.name ?? a.ticker ?? a.id);
     if (!ticker) {
       unpriced.push(`${label} (sin ticker)`);
@@ -815,7 +832,8 @@ export async function runPriceRefresh() {
           ? crypto[ticker]
           : type === "CEDEAR"
             ? cedears[ticker]
-            : stocks[ticker];
+            : // STOCK: the US quote is authoritative when it exists.
+              (stocks[ticker] ?? cedears[ticker]);
       if (unit != null && unit > 0) {
         value = qty != null && qty > 0 ? unit * qty : unit;
       }

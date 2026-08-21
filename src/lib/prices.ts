@@ -52,22 +52,46 @@ async function getJson<T>(
 export async function fetchCryptoUsd(
   tickers: string[],
 ): Promise<Record<string, number>> {
+  const out: Record<string, number> = {};
   const idToTicker = new Map<string, string>();
-  // Resolve in parallel: unknown tickers hit the search endpoint once and are
-  // cached, so an altcoin is priced like any major instead of being skipped.
+
+  // Contract addresses are priced directly — they identify one token exactly,
+  // where a symbol may match many. Everything else resolves to a CoinGecko id.
+  const contracts: Array<{ key: string; chain: string; address: string }> = [];
+  const symbols: string[] = [];
+  for (const raw of new Set(tickers)) {
+    const parsed = classifyPriceKey(raw);
+    if (!parsed) continue;
+    if (parsed.kind === "contract") {
+      contracts.push({
+        key: raw.toUpperCase(),
+        chain: parsed.chain,
+        address: parsed.address,
+      });
+    } else {
+      symbols.push(raw);
+    }
+  }
+
+  await Promise.all(
+    contracts.map(async ({ key, chain, address }) => {
+      const price = await fetchTokenUsd(chain, address);
+      if (price != null && price > 0) out[key] = price;
+    }),
+  );
+
   const resolved = await Promise.all(
-    [...new Set(tickers.map((t) => t.toUpperCase()))].map(
-      async (key) => [key, await resolveCoinId(key)] as const,
+    symbols.map(
+      async (raw) => [raw.toUpperCase(), await resolveCoinId(raw)] as const,
     ),
   );
   for (const [key, id] of resolved) if (id) idToTicker.set(id, key);
-  if (idToTicker.size === 0) return {};
+  if (idToTicker.size === 0) return out;
   const ids = encodeURIComponent([...idToTicker.keys()].join(","));
   const json = await getJson<Record<string, { usd?: number }>>(
     `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`,
     { Accept: "application/json" },
   );
-  const out: Record<string, number> = {};
   for (const [id, body] of Object.entries(json ?? {})) {
     const ticker = idToTicker.get(id);
     if (ticker && typeof body.usd === "number") out[ticker] = body.usd;
@@ -247,6 +271,11 @@ const coinIdCache = new Map<string, string | null>();
  * every refresh.
  */
 export async function resolveCoinId(ticker: string): Promise<string | null> {
+  // A pinned CoinGecko id is a lowercase slug ("graphite-protocol"); a ticker
+  // symbol is short and unhyphenated. Take a hyphen as "this is already an id"
+  // and skip resolution entirely.
+  if (ticker.includes("-")) return ticker.toLowerCase();
+
   const key = ticker.toUpperCase();
   const known = COIN_IDS[key];
   if (known) return known;
@@ -321,4 +350,71 @@ export function parseCedearQuotes(rows: unknown): Record<string, number> {
     out[symbol] = price;
   }
   return out;
+}
+
+/* --------------------------------------------------- contract-address quotes */
+
+export type PriceKey =
+  | { kind: "symbol"; value: string }
+  | { kind: "id"; value: string }
+  | { kind: "contract"; chain: string; address: string };
+
+const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+// Base58 excludes 0, O, I and l; Solana addresses land in the 32-44 range.
+const SOLANA_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+/**
+ * Work out what a price key actually is.
+ *
+ * A contract address is the only unambiguous identifier — "GP" can be a dozen
+ * tokens, but an address is exactly one. An explicit "chain:address" wins;
+ * otherwise the shape decides.
+ */
+export function classifyPriceKey(raw: string): PriceKey | null {
+  const key = raw.trim();
+  if (!key) return null;
+
+  const colon = key.indexOf(":");
+  if (colon > 0) {
+    const chain = key.slice(0, colon).trim().toLowerCase();
+    const address = key.slice(colon + 1).trim();
+    if (chain && address) return { kind: "contract", chain, address };
+  }
+  if (EVM_ADDRESS.test(key)) {
+    return { kind: "contract", chain: "ethereum", address: key.toLowerCase() };
+  }
+  // A CoinGecko id is lowercase-with-hyphens and would never be valid base58,
+  // so test the address shape only when there is no hyphen.
+  if (!key.includes("-") && SOLANA_ADDRESS.test(key) && key.length >= 32) {
+    return { kind: "contract", chain: "solana", address: key };
+  }
+  if (key.includes("-")) return { kind: "id", value: key.toLowerCase() };
+  return { kind: "symbol", value: key.toUpperCase() };
+}
+
+export function parseTokenPrice(
+  json: unknown,
+  address: string,
+): number | null {
+  const body = json as Record<string, { usd?: number }> | null;
+  if (!body || typeof body !== "object") return null;
+  // The endpoint echoes the address back, sometimes lowercased.
+  for (const [addr, entry] of Object.entries(body)) {
+    if (addr.toLowerCase() !== address.toLowerCase()) continue;
+    return toNum(entry?.usd);
+  }
+  return null;
+}
+
+/** USD price of a token identified by its contract address. */
+export async function fetchTokenUsd(
+  chain: string,
+  address: string,
+): Promise<number | null> {
+  const json = await getJson<unknown>(
+    `https://api.coingecko.com/api/v3/simple/token_price/${encodeURIComponent(chain)}` +
+      `?contract_addresses=${encodeURIComponent(address)}&vs_currencies=usd`,
+    { Accept: "application/json" },
+  );
+  return parseTokenPrice(json, address);
 }

@@ -10,6 +10,12 @@ export type Asset = {
   purchaseDate: string | null;
   notes: string | null;
   /**
+   * Pins the upstream identifier — a CoinGecko id like "graphite-protocol", or
+   * the feed's symbol — for when the ticker resolves to the wrong instrument or
+   * to nothing.
+   */
+  priceId: string | null;
+  /**
    * True when this asset should carry a live quote but none could be fetched.
    * `currentValue` then falls back to cost basis — an unknown price must not
    * enter net worth, weights and allocation as a confident zero.

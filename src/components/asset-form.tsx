@@ -16,6 +16,7 @@ export type AssetPayload = {
   currency: string;
   purchaseDate?: string | null;
   notes?: string | null;
+  priceId?: string | null;
 };
 
 export function AssetForm({
@@ -44,6 +45,7 @@ export function AssetForm({
   const [currency, setCurrency] = useState(initial?.currency ?? "USD");
   const [purchaseDate, setPurchaseDate] = useState(initial?.purchaseDate ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
+  const [priceId, setPriceId] = useState(initial?.priceId ?? "");
 
   // reset when opening a different asset
   const key = initial?.id ?? "new";
@@ -75,6 +77,7 @@ export function AssetForm({
             currency,
             purchaseDate: purchaseDate || null,
             notes: notes || null,
+            priceId: priceId.trim() || null,
           });
         }}
       >
@@ -155,6 +158,18 @@ export function AssetForm({
             onChange={(e) => setPurchaseDate(e.target.value)}
           />
         </Field>
+        <Field label="ID de precio (opcional)">
+          <Input
+            value={priceId}
+            onChange={(e) => setPriceId(e.target.value)}
+            placeholder="graphite-protocol"
+          />
+          <p className="mt-1 font-mono text-[10px] text-subtle">
+            fija la fuente cuando el ticker no alcanza. Cripto: el id de
+            CoinGecko, el último tramo de la URL de la moneda.
+          </p>
+        </Field>
+
         <Field label="Notas">
           <Textarea
             value={notes}
