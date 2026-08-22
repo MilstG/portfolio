@@ -133,6 +133,7 @@ function mapTx(r: Record<string, unknown>): Tx {
     category: r.category == null ? null : String(r.category),
     assetId: r.asset_id == null ? null : String(r.asset_id),
     accountId: r.account_id == null ? null : String(r.account_id),
+    liabilityId: r.liability_id == null ? null : String(r.liability_id),
   };
 }
 

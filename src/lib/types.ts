@@ -57,6 +57,8 @@ export type Tx = {
   category: string | null;
   assetId: string | null;
   accountId: string | null;
+  /** Set when the transaction pays down a debt. */
+  liabilityId: string | null;
 };
 
 export type Fx = {

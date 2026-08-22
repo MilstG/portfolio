@@ -28,11 +28,13 @@ import {
 } from "@/lib/server/portfolio";
 import {
   backfillFxHistory,
+  catchUpLoanPayments,
+  payLoanInstalment,
   backfillPurchaseDates,
   backfillSnapshots,
   importBondSchedule,
 } from "@/lib/server/extra-actions";
-import { liabilityBalance } from "@/lib/loans";
+import { liabilityBalance, loanPaymentsFor, loanStatus } from "@/lib/loans";
 import { formatUsd, parseAmount, toUsd } from "@/lib/utils";
 
 export const Route = createFileRoute("/settings")({
@@ -110,7 +112,13 @@ function SettingsPage() {
   const [wPending, setWPending] = useState(false);
 
   const debtUsd = (data.liabilities || []).reduce(
-    (s, l) => s + toUsd(liabilityBalance(l), l.currency, data.fx.average),
+    (s, l) =>
+      s +
+      toUsd(
+        liabilityBalance(l, undefined, loanPaymentsFor(l.id, data.transactions)),
+        l.currency,
+        data.fx.average,
+      ),
     0,
   );
   const fxHistAsc = [...(data.fxHistory || [])].reverse();
@@ -301,7 +309,15 @@ function SettingsPage() {
                     <span className="text-fg">{l.name}</span>
                     <span className="ml-2 tabular-nums text-loss">
                       {formatUsd(
-                        toUsd(liabilityBalance(l), l.currency, data.fx.average),
+                        toUsd(
+                          liabilityBalance(
+                            l,
+                            undefined,
+                            loanPaymentsFor(l.id, data.transactions),
+                          ),
+                          l.currency,
+                          data.fx.average,
+                        ),
                       )}
                     </span>
                     {l.interestRate != null ? (
@@ -310,6 +326,75 @@ function SettingsPage() {
                       </span>
                     ) : null}
                   </div>
+                  {(() => {
+                    const st = loanStatus(
+                      l,
+                      undefined,
+                      loanPaymentsFor(l.id, data.transactions),
+                    );
+                    if (!st.scheduled) return null;
+                    return (
+                      <>
+                        <span className="shrink-0 font-mono text-[11px] text-subtle">
+                          {st.paid}/{st.paid + st.remaining}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          title={`Registra un pago de ${formatUsd(st.payment)} con fecha de hoy`}
+                          disabled={st.remaining === 0}
+                          onClick={async () => {
+                            try {
+                              await payLoanInstalment({
+                                data: {
+                                  liabilityId: l.id,
+                                  // Hoy, no la fecha de vencimiento: el pago
+                                  // ocurre cuando sale la plata. Fechado en el
+                                  // futuro, el replay no lo contaría.
+                                  date: new Date().toISOString().slice(0, 10),
+                                  amount: st.payment,
+                                },
+                              });
+                              toast.success("Cuota registrada");
+                              await router.invalidate();
+                            } catch (err) {
+                              toast.error(
+                                err instanceof Error ? err.message : "Error",
+                              );
+                            }
+                          }}
+                        >
+                          Pagar cuota
+                        </Button>
+                        {!st.fromPayments ? (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            title="Registra de una todas las cuotas ya vencidas"
+                            onClick={async () => {
+                              try {
+                                const r = await catchUpLoanPayments({
+                                  data: { liabilityId: l.id },
+                                });
+                                toast.success(
+                                  `${r.added} cuota(s) registradas`,
+                                );
+                                await router.invalidate();
+                              } catch (err) {
+                                toast.error(
+                                  err instanceof Error ? err.message : "Error",
+                                );
+                              }
+                            }}
+                          >
+                            Poner al día
+                          </Button>
+                        ) : null}
+                      </>
+                    );
+                  })()}
                   <Button
                     type="button"
                     variant="ghost"

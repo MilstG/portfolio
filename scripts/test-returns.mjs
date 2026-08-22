@@ -262,16 +262,45 @@ amt('basura', null, 'no numerico');
   const liab = { id:'l1', name:'Hipoteca', type:'loan', balance:0, currency:'USD',
     interestRate:5, linkedAssetId:null, notes:null,
     principal:100000, termPeriods:24, startDate:'2026-01-10', paymentFrequency:'MONTHLY' };
+  // Sin pagos registrados el calendario ya no cuenta cuotas como pagas: haber
+  // pasado la fecha no es prueba de que se pago.
   const st = L.loanStatus(liab, '2026-07-15');
-  // del 10/02 al 10/07 inclusive hay seis vencimientos
-  console.log(st.paid === 6 && st.remaining === 18 ? 'PASS' : 'FAIL',
-    'cuotas pagas/restantes ->', st.paid, '/', st.remaining);
-  if (!(st.paid === 6 && st.remaining === 18)) fail++;
-  console.log(st.nextDate === '2026-08-10' ? 'PASS' : 'FAIL', 'proxima cuota ->', st.nextDate);
+  console.log(st.paid === 0 && st.remaining === 24 ? 'PASS' : 'FAIL',
+    'sin registros no hay cuotas pagas ->', st.paid, '/', st.remaining);
+  if (!(st.paid === 0 && st.remaining === 24)) fail++;
+  console.log(st.nextDate === '2026-08-10' ? 'PASS' : 'FAIL',
+    'proxima cuota pendiente ->', st.nextDate);
   if (st.nextDate !== '2026-08-10') fail++;
-  console.log(st.outstanding < 100000 && st.outstanding > 0 ? 'PASS' : 'FAIL',
-    'saldo hoy ->', st.outstanding.toFixed(2));
-  if (!(st.outstanding < 100000 && st.outstanding > 0)) fail++;
+
+  // ---- saldo desde pagos reales ----
+  const pagos = (arr) => arr.map(([date,amount])=>({date,amount}));
+  // sin pagos registrados el saldo es el capital: el calendario no es prueba de pago
+  const sinPagos = L.loanStatus(liab, '2026-07-15', []);
+  near(sinPagos.outstanding, 100000, 1e-9, 'sin pagos registrados el saldo es el capital');
+  console.log(!sinPagos.fromPayments ? 'PASS' : 'FAIL', 'sin pagos: fromPayments false');
+  if (sinPagos.fromPayments) fail++;
+
+  // seis cuotas puntuales: el saldo replicado debe coincidir con el schedule
+  const seis = L.amortizationSchedule(100000, 5, 24, '2026-01-10').slice(0,6);
+  const conPagos = L.loanStatus(liab, '2026-07-15', pagos(seis.map(r=>[r.date, r.payment])));
+  console.log(conPagos.fromPayments ? 'PASS' : 'FAIL', 'con pagos: fromPayments true');
+  if (!conPagos.fromPayments) fail++;
+  near(conPagos.outstanding, seis[5].balance, 1.0, 'replay coincide con el schedule');
+  console.log(conPagos.paid === 6 ? 'PASS' : 'FAIL', 'cuotas pagas por conteo real ->', conPagos.paid);
+  if (conPagos.paid !== 6) fail++;
+
+  // pago extra de capital: el saldo baja mas que en el schedule
+  const extra = L.replayLoan(liab, pagos([['2026-02-10', 4387.14], ['2026-03-10', 20000]]), '2026-03-11');
+  const soloDos = L.amortizationSchedule(100000, 5, 24, '2026-01-10')[1].balance;
+  console.log(extra.balance < soloDos - 15000 ? 'PASS' : 'FAIL',
+    'pago extra baja mas el capital ->', extra.balance.toFixed(2), 'vs', soloDos.toFixed(2));
+  if (!(extra.balance < soloDos - 15000)) fail++;
+
+  // cuota que no cubre ni el interes: el saldo crece
+  const corta = L.replayLoan(liab, pagos([['2027-01-10', 1]]), '2027-01-11');
+  console.log(corta.balance > 100000 ? 'PASS' : 'FAIL',
+    'pago menor al interes hace crecer el saldo ->', corta.balance.toFixed(2));
+  if (!(corta.balance > 100000)) fail++;
 
   // sin datos suficientes no se inventa un schedule
   const plano = L.loanStatus({...liab, principal:null}, '2026-07-15');

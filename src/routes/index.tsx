@@ -28,7 +28,7 @@ import { computeAnalytics } from "@/lib/analytics";
 import { portfolioReturn } from "@/lib/returns";
 import { bondMetrics } from "@/lib/bonds";
 import { computeBenchmark } from "@/lib/benchmark";
-import { liabilityBalance, loanStatus } from "@/lib/loans";
+import { liabilityBalance, loanPaymentsFor, loanStatus } from "@/lib/loans";
 import {
   computeDashboard,
   INCOME_KIND_META,
@@ -131,19 +131,22 @@ function Dashboard() {
     () => computeBenchmark(data.snapshots, data.fxHistory),
     [data.snapshots, data.fxHistory],
   );
-  const loans = useMemo(
-    () =>
-      data.liabilities.map((l) => ({
+  const loans = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    return data.liabilities.map((l) => {
+      const payments = loanPaymentsFor(l.id, data.transactions, today);
+      const status = loanStatus(l, today, payments);
+      return {
         liability: l,
-        status: loanStatus(l),
+        status,
         balanceUsd: toUsd(
-          loanStatus(l).scheduled ? loanStatus(l).outstanding : l.balance,
+          status.scheduled ? status.outstanding : l.balance,
           l.currency,
           data.fx.average,
         ),
-      })),
-    [data.liabilities, data.fx.average],
-  );
+      };
+    });
+  }, [data.liabilities, data.transactions, data.fx.average]);
   const bonds = useMemo(
     () => bondMetrics(data.assets, data.transactions, data.fx.average),
     [data.assets, data.transactions, data.fx.average],
@@ -153,7 +156,16 @@ function Dashboard() {
       data.liabilities.reduce(
         // Same definition the net worth and the DEUDAS panel use.
         (sum, l) =>
-          sum + toUsd(liabilityBalance(l), l.currency, data.fx.average),
+          sum +
+          toUsd(
+            liabilityBalance(
+              l,
+              undefined,
+              loanPaymentsFor(l.id, data.transactions),
+            ),
+            l.currency,
+            data.fx.average,
+          ),
         0,
       ),
     [data],
@@ -2143,10 +2155,26 @@ function Dashboard() {
                                 )
                               : "—"}
                           </td>
-                          <td className="hidden py-1 pr-2 text-right tabular-nums text-muted md:table-cell">
-                            {status.scheduled
-                              ? `${status.paid}/${status.paid + status.remaining}`
-                              : "—"}
+                          <td className="hidden py-1 pr-2 text-right tabular-nums md:table-cell">
+                            {status.scheduled ? (
+                              <span
+                                className={
+                                  status.fromPayments
+                                    ? "text-muted"
+                                    : "text-loss"
+                                }
+                                title={
+                                  status.fromPayments
+                                    ? "Saldo calculado desde los pagos registrados"
+                                    : "Sin pagos registrados: el saldo es el capital original"
+                                }
+                              >
+                                {status.paid}/{status.paid + status.remaining}
+                                {status.fromPayments ? "" : " ⚠"}
+                              </span>
+                            ) : (
+                              "—"
+                            )}
                           </td>
                           <td className="hidden py-1 pr-2 text-right tabular-nums text-muted md:table-cell">
                             {status.scheduled
@@ -2170,6 +2198,18 @@ function Dashboard() {
                     <p className="mt-1 font-mono text-[11px] text-subtle">
                       Cargá capital, plazo y fecha de inicio en CFG para que la
                       deuda proyecte cuotas y separe capital de interés.
+                    </p>
+                  ) : loans.some(
+                      (x) => x.status.scheduled && !x.status.fromPayments,
+                    ) ? (
+                    <p className="mt-1 font-mono text-[11px] text-loss">
+                      ⚠ Sin pagos registrados el saldo es el capital original —
+                      haber pasado la fecha no prueba que la cuota se pagó.
+                      Registralas desde{" "}
+                      <Link to="/settings" className="underline">
+                        CFG
+                      </Link>
+                      .
                     </p>
                   ) : null}
                 </TableWrap>

@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { getSql } from "@/lib/db";
+import { amortizationSchedule } from "@/lib/loans";
 import { requireAuth } from "@/lib/server/auth";
 import { fetchCryptoUsd, fetchStockUsd } from "@/lib/prices";
 
@@ -238,6 +239,120 @@ export const backfillFxHistory = createServerFn({ method: "POST" })
  * over the wrong window. The ON import seeded every bond with the same date,
  * which is not when they were bought.
  */
+/**
+ * Record a payment against a debt.
+ *
+ * The payment is a real transaction, so the outstanding principal is replayed
+ * from it rather than assumed from the calendar. Debiting an account is
+ * optional — the money may have left somewhere the app does not track.
+ */
+export const payLoanInstalment = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
+  .validator(
+    z.object({
+      liabilityId: z.string().min(1).max(64),
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}/),
+      amount: z.number().positive().finite(),
+      accountId: z.string().max(64).optional().nullable(),
+      note: z.string().max(200).optional().nullable(),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const sql = await getSql();
+    const rows = await sql.query<{ name: string; currency: string }>(
+      `select name, currency from liabilities where id = $1`,
+      [data.liabilityId],
+    );
+    const liability = rows[0];
+    if (!liability) throw new Error("La deuda no existe");
+
+    const date = data.date.slice(0, 10);
+    const id = crypto.randomUUID();
+    // Stored negative: it is money leaving, like any other expense.
+    await sql.query(
+      `insert into transactions (id, date, description, amount, currency, type, category, account_id, liability_id)
+       values ($1,$2,$3,$4,$5,'EXPENSE','Deuda',$6,$7)`,
+      [
+        id,
+        date,
+        data.note?.trim() || `Cuota ${liability.name}`,
+        -Math.abs(data.amount),
+        liability.currency,
+        data.accountId || null,
+        data.liabilityId,
+      ],
+    );
+    if (data.accountId) {
+      await sql.query(
+        `update accounts set balance = balance - $1, updated_at = now() where id = $2`,
+        [Math.abs(data.amount), data.accountId],
+      );
+    }
+    return { id };
+  });
+
+/**
+ * Record every instalment already due, in one go.
+ *
+ * Switching a debt from a calendar-derived balance to a payment-derived one
+ * would otherwise mean logging two years of instalments by hand before the
+ * number looked right again.
+ */
+export const catchUpLoanPayments = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
+  .validator(z.object({ liabilityId: z.string().min(1).max(64) }))
+  .handler(async ({ data }) => {
+    const sql = await getSql();
+    const rows = await sql.query<Record<string, unknown>>(
+      `select * from liabilities where id = $1`,
+      [data.liabilityId],
+    );
+    const row = rows[0];
+    if (!row) throw new Error("La deuda no existe");
+
+    const principal = row.principal == null ? 0 : Number(row.principal);
+    const term = row.term_periods == null ? 0 : Number(row.term_periods);
+    const start = row.start_date ? String(row.start_date).slice(0, 10) : null;
+    if (!(principal > 0) || !(term > 0) || !start) {
+      throw new Error("La deuda necesita capital, plazo y fecha de inicio");
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const schedule = amortizationSchedule(
+      principal,
+      row.interest_rate == null ? 0 : Number(row.interest_rate),
+      term,
+      start,
+      row.payment_frequency ? String(row.payment_frequency) : "MONTHLY",
+    ).filter((r) => r.date <= today);
+
+    const existing = await sql.query<{ n: number }>(
+      `select count(*)::int as n from transactions where liability_id = $1`,
+      [data.liabilityId],
+    );
+    const already = existing[0]?.n ?? 0;
+    const pending = schedule.slice(already);
+    if (pending.length === 0) return { added: 0, already };
+
+    // Deterministic ids so a second run cannot duplicate the history.
+    await sql.query(
+      `insert into transactions (id, date, description, amount, currency, type, category, liability_id)
+       select t.id, t.date, t.description, t.amount, $5, 'EXPENSE', 'Deuda', $6
+       from unnest($1::text[], $2::date[], $3::text[], $4::numeric[])
+         as t(id, date, description, amount)
+       on conflict (id) do nothing`,
+      [
+        pending.map((r) => `loan-${data.liabilityId}-${r.n}`),
+        pending.map((r) => r.date),
+        pending.map((r) => `Cuota ${String(row.name)} ${r.n}`),
+        pending.map((r) => -r.payment),
+        String(row.currency || "USD"),
+        data.liabilityId,
+      ],
+    );
+    return { added: pending.length, already };
+  });
+
 export const backfillPurchaseDates = createServerFn({ method: "POST" })
   .middleware([requireAuth])
   .validator(

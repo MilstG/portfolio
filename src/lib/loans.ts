@@ -1,4 +1,4 @@
-import type { Liability } from "@/lib/types";
+import type { Liability, Tx } from "@/lib/types";
 
 /** Payments per year, by frequency. */
 const PERIODS_PER_YEAR: Record<string, number> = {
@@ -93,6 +93,14 @@ export function amortizationSchedule(
 export type LoanStatus = {
   /** True when the liability carries enough data to build a schedule. */
   scheduled: boolean;
+  /**
+   * True when the outstanding principal comes from recorded payments rather
+   * than from the calendar. Without payments logged the schedule is only a
+   * projection, and saying so is the difference between a fact and a guess.
+   */
+  fromPayments: boolean;
+  /** Interest run up since the last recorded payment. */
+  accruedInterest: number;
   payment: number;
   schedule: AmortRow[];
   paid: number;
@@ -118,6 +126,8 @@ export type LoanStatus = {
 export function loanStatus(
   l: Liability,
   today = new Date().toISOString().slice(0, 10),
+  /** Recorded payments; when empty the status falls back to the projection. */
+  payments: LoanPayment[] = [],
 ): LoanStatus {
   const principal = l.principal ?? 0;
   const term = l.termPeriods ?? 0;
@@ -127,6 +137,8 @@ export function loanStatus(
   if (!(principal > 0) || !(term > 0) || !start) {
     return {
       scheduled: false,
+      fromPayments: false,
+      accruedInterest: 0,
       payment: 0,
       schedule: [],
       paid: 0,
@@ -143,21 +155,48 @@ export function loanStatus(
 
   const frequency = l.paymentFrequency || "MONTHLY";
   const schedule = amortizationSchedule(principal, rate, term, start, frequency);
-  const past = schedule.filter((r) => r.date <= today);
   const future = schedule.filter((r) => r.date > today);
   const next = future[0] ?? null;
+  const payment = loanPayment(principal, rate, term, frequency);
 
+  // Recorded payments win over the calendar: they are what happened.
+  if (payments.length > 0) {
+    const replay = replayLoan(l, payments, today);
+    const remaining = Math.max(0, term - replay.paidCount);
+    const dueAfter = schedule.filter((r) => r.n > replay.paidCount);
+    return {
+      scheduled: true,
+      fromPayments: true,
+      accruedInterest: replay.accruedInterest,
+      payment,
+      schedule,
+      paid: replay.paidCount,
+      remaining,
+      outstanding: replay.balance,
+      nextDate: dueAfter[0]?.date ?? null,
+      nextPayment: dueAfter[0] ? payment : null,
+      interestPaid: replay.interestPaid,
+      interestRemaining: dueAfter.reduce((s, r) => s + r.interest, 0),
+      interestTotal: schedule.reduce((s, r) => s + r.interest, 0),
+      lastDate: schedule[schedule.length - 1]?.date ?? null,
+    };
+  }
+
+  // Nothing logged: the whole schedule is still ahead. The calendar is not
+  // evidence that an instalment was paid.
   return {
     scheduled: true,
-    payment: loanPayment(principal, rate, term, frequency),
+    fromPayments: false,
+    accruedInterest: 0,
+    payment,
     schedule,
-    paid: past.length,
-    remaining: future.length,
-    outstanding: past.length > 0 ? past[past.length - 1].balance : principal,
-    nextDate: next?.date ?? null,
-    nextPayment: next?.payment ?? null,
-    interestPaid: past.reduce((s, r) => s + r.interest, 0),
-    interestRemaining: future.reduce((s, r) => s + r.interest, 0),
+    paid: 0,
+    remaining: term,
+    outstanding: principal,
+    nextDate: next?.date ?? schedule[0]?.date ?? null,
+    nextPayment: next ? payment : null,
+    interestPaid: 0,
+    interestRemaining: schedule.reduce((s, r) => s + r.interest, 0),
     interestTotal: schedule.reduce((s, r) => s + r.interest, 0),
     lastDate: schedule[schedule.length - 1]?.date ?? null,
   };
@@ -174,7 +213,113 @@ export function loanStatus(
 export function liabilityBalance(
   l: Liability,
   today = new Date().toISOString().slice(0, 10),
+  payments: LoanPayment[] = [],
 ): number {
-  const status = loanStatus(l, today);
+  const status = loanStatus(l, today, payments);
   return status.scheduled ? status.outstanding : l.balance;
+}
+
+/* ------------------------------------------------------- payments actually made */
+
+/**
+ * Elapsed periods between two dates, in the loan's own frequency.
+ *
+ * Counted in calendar months rather than in days: a bank charges one period of
+ * interest per instalment regardless of whether the month had 28 days or 31,
+ * so an actual/365 accrual drifts away from the coupon book — about USD 20 over
+ * six instalments on a 100k loan, which is small, wrong, and exactly the kind
+ * of gap that stops a balance from tying out to the statement.
+ *
+ * The day-of-month remainder keeps an off-schedule payment proportional.
+ */
+function periodsBetween(
+  fromIso: string,
+  toIso: string,
+  frequency: string,
+): number {
+  const a = new Date(fromIso + "T12:00:00Z");
+  const b = new Date(toIso + "T12:00:00Z");
+  const months =
+    (b.getUTCFullYear() - a.getUTCFullYear()) * 12 +
+    (b.getUTCMonth() - a.getUTCMonth()) +
+    (b.getUTCDate() - a.getUTCDate()) / 30;
+  const monthsPerPeriod = 12 / periodsPerYear(frequency);
+  return months / monthsPerPeriod;
+}
+
+export type LoanPayment = { date: string; amount: number };
+
+/** Payments recorded against a liability, oldest first, positive amounts. */
+export function loanPaymentsFor(
+  liabilityId: string,
+  transactions: Tx[],
+  today = new Date().toISOString().slice(0, 10),
+): LoanPayment[] {
+  return transactions
+    .filter((t) => t.liabilityId === liabilityId && t.date <= today)
+    .map((t) => ({ date: t.date, amount: Math.abs(t.amount) }))
+    .filter((p) => p.amount > 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+export type LoanReplay = {
+  balance: number;
+  principalPaid: number;
+  interestPaid: number;
+  paidCount: number;
+  /** Interest run up since the last payment and not yet covered. */
+  accruedInterest: number;
+  lastPaymentDate: string | null;
+};
+
+/**
+ * Rebuild the outstanding principal from the payments that were actually made.
+ *
+ * Interest accrues on the balance over the real number of days between
+ * payments (actual/365, the convention used everywhere else here), so a payment
+ * made early, late, or for an unusual amount lands where it belongs instead of
+ * being forced onto the scheduled grid. Anything above the interest due reduces
+ * capital, which is what makes an extra principal payment work.
+ */
+export function replayLoan(
+  l: Liability,
+  payments: LoanPayment[],
+  today = new Date().toISOString().slice(0, 10),
+): LoanReplay {
+  const principal = l.principal ?? 0;
+  const frequency = l.paymentFrequency || "MONTHLY";
+  // Periodic rate, the same one the schedule uses.
+  const i = (l.interestRate ?? 0) / 100 / periodsPerYear(frequency);
+  const start = l.startDate;
+
+  let balance = principal;
+  let principalPaid = 0;
+  let interestPaid = 0;
+  let cursor = start ?? (payments[0]?.date ?? today);
+
+  for (const p of payments) {
+    const periods = Math.max(0, periodsBetween(cursor, p.date, frequency));
+    const interest = balance * i * periods;
+    // Interest first, remainder against capital — a payment short of the
+    // interest due leaves the balance growing, which is the truth.
+    const toPrincipal = p.amount - interest;
+    interestPaid += Math.min(p.amount, interest);
+    if (toPrincipal > 0) {
+      principalPaid += Math.min(toPrincipal, balance);
+      balance = Math.max(0, balance - toPrincipal);
+    } else {
+      balance += -toPrincipal;
+    }
+    cursor = p.date;
+  }
+
+  const sinceLast = Math.max(0, periodsBetween(cursor, today, frequency));
+  return {
+    balance,
+    principalPaid,
+    interestPaid,
+    paidCount: payments.length,
+    accruedInterest: balance * i * sinceLast,
+    lastPaymentDate: payments[payments.length - 1]?.date ?? null,
+  };
 }
