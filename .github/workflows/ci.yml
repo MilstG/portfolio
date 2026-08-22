@@ -1,0 +1,49 @@
+name: CI
+
+# Every push and every PR. The bugs this exists to catch — a stray column in an
+# UPDATE, an amount parser that ate a decimal — were all caught by these exact
+# four commands locally, and all reached production anyway because nothing ran
+# them on the way.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# A newer push makes the older run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # No DATABASE_URL on purpose: the suites spin up PGLite in memory, and
+    # scripts/test-prices.mjs refuses to run if it finds a real one.
+    env:
+      CI: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches the engines field in package.json.
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
