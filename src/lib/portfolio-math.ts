@@ -1,4 +1,6 @@
-import { annualFactor, toUsd } from "@/lib/utils";
+import { annualFactor, toUsd,
+  monthLabel,
+} from "@/lib/utils";
 import type {
   Account,
   Asset,
@@ -412,7 +414,7 @@ export function monthlyProjectionBuckets(
     const key = d.toISOString().slice(0, 7);
     buckets.push({
       key,
-      label: key.slice(5) + "/" + key.slice(2, 4),
+      label: monthLabel(key),
       total: 0,
     });
   }
@@ -449,7 +451,7 @@ export function monthlyProjectionStacked(
     const key = d.toISOString().slice(0, 7);
     buckets.push({
       key,
-      label: key.slice(5) + "/" + key.slice(2, 4),
+      label: monthLabel(key),
       total: 0,
       COUPON: 0,
       RENT: 0,
@@ -522,7 +524,7 @@ export function monthlyTxSeries(transactions: Tx[], fxAvg: number, months = 6) {
     const key = d.toISOString().slice(0, 7);
     buckets.push({
       key,
-      label: key.slice(5) + "/" + key.slice(2, 4),
+      label: monthLabel(key),
       in: 0,
       out: 0,
     });

@@ -1,4 +1,5 @@
 import type { FxHistoryRow, Snapshot } from "@/lib/types";
+import { monthLabel } from "@/lib/utils";
 
 export type BenchmarkPoint = {
   date: string;
@@ -62,7 +63,7 @@ export function computeBenchmark(
     const row = asOf(fx, s.date) ?? baseFx;
     return {
       date: s.date,
-      label: s.date.slice(5, 7) + "/" + s.date.slice(2, 4),
+      label: monthLabel(s.date),
       nw: (s.totalUsd / baseNw) * 100,
       blue: (row.blue / baseFx.blue) * 100,
       mep: (row.mep / baseFx.mep) * 100,

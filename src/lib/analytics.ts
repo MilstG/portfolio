@@ -1,4 +1,6 @@
-import { toUsd } from "@/lib/utils";
+import { toUsd,
+  monthLabel,
+} from "@/lib/utils";
 import type {
   Account,
   AllocTarget,
@@ -56,7 +58,7 @@ export function paymentCalendar(events: ProjectedEvent[], months = 24) {
     const key = d.toISOString().slice(0, 7);
     cells.push({
       key,
-      label: key.slice(5) + "/" + key.slice(2, 4),
+      label: monthLabel(key),
       total: 0,
       count: 0,
     });
@@ -120,7 +122,7 @@ export function incomeExpenseSeries(
     const key = d.toISOString().slice(0, 7);
     buckets.push({
       key,
-      label: key.slice(5) + "/" + key.slice(2, 4),
+      label: monthLabel(key),
       income: 0,
       expense: 0,
       net: 0,

@@ -145,3 +145,20 @@ export function parseAmount(raw: string | null | undefined): number | null {
   const value = Number(normalised);
   return Number.isFinite(value) ? value : null;
 }
+
+const MONTHS_ES = [
+  "ENE", "FEB", "MAR", "ABR", "MAY", "JUN",
+  "JUL", "AGO", "SEP", "OCT", "NOV", "DIC",
+];
+
+/**
+ * Month label for a chart axis, from an ISO date or an "YYYY-MM" key.
+ *
+ * The previous form was "08/26", which reads just as easily as the 8th of
+ * August — on a 24-month payment calendar reaching 2035, the year is the point.
+ */
+export function monthLabel(iso: string): string {
+  const month = Number(iso.slice(5, 7));
+  const name = MONTHS_ES[month - 1] ?? "???";
+  return `${name} ${iso.slice(2, 4)}`;
+}

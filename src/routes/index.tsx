@@ -34,7 +34,7 @@ import {
   INCOME_KINDS,
   type IncomeKind,
 } from "@/lib/portfolio-math";
-import { formatUsd, formatPct, toUsd } from "@/lib/utils";
+import { formatUsd, formatPct, monthLabel, toUsd } from "@/lib/utils";
 
 export const Route = createFileRoute("/")({
   loader: () => getPortfolio(),
@@ -146,7 +146,7 @@ function Dashboard() {
     const today = new Date().toISOString().slice(0, 10);
     const pts = data.snapshots.map((x) => ({
       date: x.date,
-      label: x.date.slice(5, 7) + "/" + x.date.slice(2, 4),
+      label: monthLabel(x.date),
       value: x.totalUsd,
     }));
     const last = pts.find((x) => x.date === today);
@@ -154,7 +154,7 @@ function Dashboard() {
     else
       pts.push({
         date: today,
-        label: today.slice(5, 7) + "/" + today.slice(2, 4),
+        label: monthLabel(today),
         value: s.nw,
       });
     return pts;
@@ -648,13 +648,13 @@ function Dashboard() {
                       {e.assetId && describeAsset(e.assetId) ? (
                         <AssetLink
                           id={e.assetId}
-                          name={`${e.date.slice(5)} · ${e.name}`}
+                          name={`${e.date} · ${e.name}`}
                           tip={describeAsset(e.assetId)}
                           className="text-subtle"
                         />
                       ) : (
                         <span className="truncate text-subtle">
-                          {e.date.slice(5)} · {e.name}
+                          {e.date} · {e.name}
                         </span>
                       )}
                       <span className="shrink-0 text-gain">
@@ -1019,7 +1019,7 @@ function Dashboard() {
                           {c.count}
                         </td>
                         <td className="py-1 text-right tabular-nums text-subtle">
-                          {c.next.slice(5)}
+                          {c.next}
                         </td>
                       </tr>
                     ))}
@@ -1214,7 +1214,7 @@ function Dashboard() {
                             : `${b.modified.toFixed(1)}a`}
                         </td>
                         <td className="hidden py-1 text-right tabular-nums text-subtle md:table-cell">
-                          {b.maturity ? b.maturity.slice(2, 7) : "—"}
+                          {b.maturity ?? "—"}
                         </td>
                       </tr>
                     ))}
@@ -1269,8 +1269,8 @@ function Dashboard() {
                         key={e.date + e.name + i}
                         className="border-b border-line/50 hover:bg-raised/40"
                       >
-                        <td className="py-1 pr-2 tabular-nums text-subtle">
-                          {e.date.slice(5)}
+                        <td className="py-1 pr-2 whitespace-nowrap tabular-nums text-subtle">
+                          {e.date}
                         </td>
                         <td className="py-1 pr-2 truncate text-fg">{e.name}</td>
                         <td className="py-1 text-right tabular-nums text-gain">
