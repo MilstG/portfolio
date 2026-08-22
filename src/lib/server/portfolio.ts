@@ -146,6 +146,12 @@ function mapLiability(r: Record<string, unknown>): Liability {
     interestRate: r.interest_rate == null ? null : num(r.interest_rate),
     linkedAssetId: r.linked_asset_id == null ? null : String(r.linked_asset_id),
     notes: r.notes == null ? null : String(r.notes),
+    principal: r.principal == null ? null : num(r.principal),
+    termPeriods: r.term_periods == null ? null : Number(r.term_periods),
+    startDate:
+      r.start_date == null ? null : String(r.start_date).slice(0, 10),
+    paymentFrequency:
+      r.payment_frequency == null ? null : String(r.payment_frequency),
   };
 }
 
@@ -331,7 +337,9 @@ async function writeTodaySnapshot() {
   const [assetRows, accRows, liabilityRows, fx] = await Promise.all([
     sql`select current_value, currency from assets`,
     sql`select balance, currency from accounts`,
-    sql`select balance, currency from liabilities`,
+    // Full rows: the net worth now nets a scheduled loan at its outstanding
+    // principal, which needs the amortisation columns.
+    sql`select * from liabilities`,
     loadFx(),
   ]);
   const total = netWorthUsd({
@@ -343,10 +351,7 @@ async function writeTodaySnapshot() {
       balance: num(r.balance),
       currency: String(r.currency),
     })),
-    liabilities: liabilityRows.map((r) => ({
-      balance: num(r.balance),
-      currency: String(r.currency),
-    })),
+    liabilities: liabilityRows.map(mapLiability),
     fx,
   });
   const today = new Date().toISOString().slice(0, 10);

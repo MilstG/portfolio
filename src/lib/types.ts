@@ -77,9 +77,18 @@ export type Liability = {
   type: string;
   balance: number;
   currency: string;
+  /** Annual nominal rate, in percent. */
   interestRate: number | null;
   linkedAssetId: string | null;
   notes: string | null;
+  /**
+   * Amortisation inputs. All three are needed to derive a schedule; with any of
+   * them missing the liability stays a plain balance, as before.
+   */
+  principal: number | null;
+  termPeriods: number | null;
+  startDate: string | null;
+  paymentFrequency: string | null;
 };
 
 export type Goal = {

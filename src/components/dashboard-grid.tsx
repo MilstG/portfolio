@@ -42,7 +42,8 @@ export type PanelId =
   | "costLadder"
   | "goals"
   | "returns"
-  | "benchmark";
+  | "benchmark"
+  | "debts";
 
 /** Column span: 1 = 1 col, 2 = 2 cols, 3 = full width. */
 export type PanelSpan = 1 | 2 | 3;
@@ -72,6 +73,7 @@ export const PANEL_LABELS: Record<PanelId, string> = {
   goals: "GOALS",
   returns: "RETORNO ANUAL",
   benchmark: "NW vs DÓLAR",
+  debts: "DEUDAS",
 };
 
 export const DEFAULT_LAYOUT: PanelId[] = [
@@ -80,6 +82,7 @@ export const DEFAULT_LAYOUT: PanelId[] = [
   "insights",
   "returns",
   "benchmark",
+  "debts",
   "holdings",
   "nwSeries",
   "projIncome",
@@ -102,6 +105,7 @@ export const DEFAULT_LAYOUT: PanelId[] = [
 ];
 
 const DEFAULT_SPANS: Partial<Record<PanelId, PanelSpan>> = {
+  debts: 3,
   returns: 3,
   holdings: 3,
   coupons24: 3,

@@ -28,6 +28,7 @@ import { computeAnalytics } from "@/lib/analytics";
 import { portfolioReturn } from "@/lib/returns";
 import { bondMetrics } from "@/lib/bonds";
 import { computeBenchmark } from "@/lib/benchmark";
+import { liabilityBalance, loanStatus } from "@/lib/loans";
 import {
   computeDashboard,
   INCOME_KIND_META,
@@ -130,6 +131,19 @@ function Dashboard() {
     () => computeBenchmark(data.snapshots, data.fxHistory),
     [data.snapshots, data.fxHistory],
   );
+  const loans = useMemo(
+    () =>
+      data.liabilities.map((l) => ({
+        liability: l,
+        status: loanStatus(l),
+        balanceUsd: toUsd(
+          loanStatus(l).scheduled ? loanStatus(l).outstanding : l.balance,
+          l.currency,
+          data.fx.average,
+        ),
+      })),
+    [data.liabilities, data.fx.average],
+  );
   const bonds = useMemo(
     () => bondMetrics(data.assets, data.transactions, data.fx.average),
     [data.assets, data.transactions, data.fx.average],
@@ -137,7 +151,9 @@ function Dashboard() {
   const debtUsd = useMemo(
     () =>
       data.liabilities.reduce(
-        (sum, l) => sum + toUsd(l.balance, l.currency, data.fx.average),
+        // Same definition the net worth and the DEUDAS panel use.
+        (sum, l) =>
+          sum + toUsd(liabilityBalance(l), l.currency, data.fx.average),
         0,
       ),
     [data],
@@ -291,11 +307,23 @@ function Dashboard() {
   );
   const calendarStats = useMemo(() => {
     const rows = a.calendarStacked;
-    const total = rows.reduce((sum, r) => sum + r.total, 0);
-    if (total <= 0) return null;
+    // Income and debt service are summed apart: netting them would hide both.
+    const income = rows.reduce(
+      (sum, r) => sum + r.COUPON + r.RENT + r.DIVIDEND + r.AMORT + r.OTHER,
+      0,
+    );
+    const debt = rows.reduce((sum, r) => sum + r.DEBT, 0);
+    if (income <= 0 && debt === 0) return null;
     const peak = rows.reduce((best, r) => (r.total > best.total ? r : best));
     const payments = a.calendar.reduce((sum, c) => sum + c.count, 0);
-    return { total, avg: total / rows.length, peak, payments };
+    return {
+      income,
+      debt,
+      net: income + debt,
+      avg: income / rows.length,
+      peak,
+      payments,
+    };
   }, [a.calendarStacked, a.calendar]);
 
   const holdingsSort = useSort(
@@ -1057,11 +1085,29 @@ function Dashboard() {
                 <div className="flex h-56 flex-col">
                   <div className="mb-1 flex flex-wrap items-baseline gap-x-4 gap-y-0.5 font-mono text-[11px]">
                     <span className="text-muted">
-                      total{" "}
+                      ingresos{" "}
                       <span className="tabular-nums text-gain">
-                        {formatUsd(calendarStats.total)}
+                        {formatUsd(calendarStats.income)}
                       </span>
                     </span>
+                    {calendarStats.debt !== 0 ? (
+                      <>
+                        <span className="text-muted">
+                          deuda{" "}
+                          <span className="tabular-nums text-loss">
+                            {formatUsd(calendarStats.debt)}
+                          </span>
+                        </span>
+                        <span className="text-muted">
+                          neto{" "}
+                          <span
+                            className={`tabular-nums ${calendarStats.net >= 0 ? "text-gain" : "text-loss"}`}
+                          >
+                            {formatUsd(calendarStats.net)}
+                          </span>
+                        </span>
+                      </>
+                    ) : null}
                     <span className="text-muted">
                       prom/mes{" "}
                       <span className="tabular-nums text-fg">
@@ -2035,6 +2081,98 @@ function Dashboard() {
                     </ResponsiveContainer>
                   </div>
                 </div>
+              )}
+            </Monitor>
+          ),
+
+          debts: (
+            <Monitor
+              title="DEUDAS"
+              action={
+                <HelpTip content="Cuota fija por sistema francés. El saldo sale del schedule cuando la deuda tiene capital, plazo y fecha de inicio; si no, es el saldo cargado a mano. Las cuotas futuras aparecen en PAY CALENDAR en rojo." />
+              }
+            >
+              {loans.length === 0 ? (
+                <p className="font-mono text-xs text-muted">
+                  sin deudas cargadas — se agregan en CFG
+                </p>
+              ) : (
+                <TableWrap>
+                  <table className="w-full border-collapse font-mono text-[12px] md:min-w-[620px]">
+                    <thead>
+                      <tr className="border-b border-line text-left text-[11px] text-muted">
+                        <th className="py-1 pr-2">DEUDA</th>
+                        <th className="py-1 pr-2 text-right">SALDO</th>
+                        <th className="hidden py-1 pr-2 text-right sm:table-cell">
+                          CUOTA
+                        </th>
+                        <th className="hidden py-1 pr-2 text-right md:table-cell">
+                          CUOTAS
+                        </th>
+                        <th className="hidden py-1 pr-2 text-right md:table-cell">
+                          INT. RESTANTE
+                        </th>
+                        <th className="py-1 text-right">PRÓXIMA</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {loans.map(({ liability: l, status, balanceUsd }) => (
+                        <tr
+                          key={l.id}
+                          className="border-b border-line/50 hover:bg-raised/40"
+                        >
+                          <td className="py-1 pr-2 text-fg">
+                            {l.name}
+                            {l.interestRate != null ? (
+                              <span className="ml-1 text-subtle">
+                                {l.interestRate}%
+                              </span>
+                            ) : null}
+                          </td>
+                          <td className="py-1 pr-2 text-right tabular-nums text-loss">
+                            {formatUsd(balanceUsd)}
+                          </td>
+                          <td className="hidden py-1 pr-2 text-right tabular-nums sm:table-cell">
+                            {status.scheduled
+                              ? formatUsd(
+                                  toUsd(
+                                    status.payment,
+                                    l.currency,
+                                    data.fx.average,
+                                  ),
+                                )
+                              : "—"}
+                          </td>
+                          <td className="hidden py-1 pr-2 text-right tabular-nums text-muted md:table-cell">
+                            {status.scheduled
+                              ? `${status.paid}/${status.paid + status.remaining}`
+                              : "—"}
+                          </td>
+                          <td className="hidden py-1 pr-2 text-right tabular-nums text-muted md:table-cell">
+                            {status.scheduled
+                              ? formatUsd(
+                                  toUsd(
+                                    status.interestRemaining,
+                                    l.currency,
+                                    data.fx.average,
+                                  ),
+                                )
+                              : "—"}
+                          </td>
+                          <td className="py-1 text-right tabular-nums whitespace-nowrap text-subtle">
+                            {status.nextDate ?? "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {loans.every((x) => !x.status.scheduled) ? (
+                    <p className="mt-1 font-mono text-[11px] text-subtle">
+                      Cargá capital, plazo y fecha de inicio en CFG para que la
+                      deuda proyecte cuotas y separe capital de interés.
+                    </p>
+                  ) : null}
+                </TableWrap>
               )}
             </Monitor>
           ),

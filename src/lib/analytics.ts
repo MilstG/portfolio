@@ -346,7 +346,13 @@ export function goalsProgress(goals: Goal[], nw: number) {
 export function computeAnalytics(p: Portfolio) {
   const fxAvg = p.fx.average;
   const nw = netWorthUsd(p);
-  const events = projectCashflow(p.recurring, p.transactions, fxAvg, 24);
+  const events = projectCashflow(
+    p.recurring,
+    p.transactions,
+    fxAvg,
+    24,
+    p.liabilities,
+  );
   const events12 = events.filter((e) => {
     const end = new Date();
     end.setMonth(end.getMonth() + 12);

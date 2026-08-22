@@ -4,6 +4,12 @@ const { xirr } = await server.ssrLoadModule('/src/lib/returns.ts');
 
 let fail = 0;
 const near = (a, b, tol, label) => {
+  if (typeof a === 'string' || typeof b === 'string') {
+    const ok = a === b;
+    console.log(ok ? 'PASS' : 'FAIL', label, '->', a, 'esperado', b);
+    if (!ok) fail++;
+    return;
+  }
   const ok = a !== null && Math.abs(a - b) < tol;
   console.log(ok ? 'PASS' : 'FAIL', label, '->', a === null ? 'null' : a.toFixed(6), 'esperado', b);
   if (!ok) fail++;
@@ -226,6 +232,52 @@ amt('-500.25', -500.25, 'negativo');
 amt('', null, 'vacio');
 amt('basura', null, 'no numerico');
 
+
+// ---- prestamos ----
+{
+  const L = await server.ssrLoadModule('/src/lib/loans.ts');
+  // Caso con resultado analitico: 100.000 al 5% anual a 24 meses.
+  // cuota = P*i/(1-(1+i)^-n) con i = 0.05/12
+  const cuota = L.loanPayment(100000, 5, 24, 'MONTHLY');
+  near(cuota, 4387.138973, 1e-6, 'cuota francesa');
+  // tasa cero reparte parejo en vez de dividir por cero
+  near(L.loanPayment(120000, 0, 12, 'MONTHLY'), 10000, 1e-9, 'tasa cero');
+  near(L.loanPayment(0, 5, 24), 0, 1e-9, 'sin capital no hay cuota');
+
+  const sch = L.amortizationSchedule(100000, 5, 24, '2026-01-10', 'MONTHLY');
+  console.log(sch.length === 24 ? 'PASS' : 'FAIL', 'schedule de 24 cuotas ->', sch.length);
+  if (sch.length !== 24) fail++;
+  // el saldo tiene que cerrar exactamente en cero
+  near(sch[sch.length-1].balance, 0, 1e-9, 'saldo final exacto');
+  // capital devuelto = principal
+  near(sch.reduce((s,r)=>s+r.principal,0), 100000, 1e-6, 'capital suma el principal');
+  near(sch.reduce((s,r)=>s+r.interest,0), 5291.3354, 1e-3, 'interes total');
+  // la primera cuota es casi todo interes, la ultima casi todo capital
+  console.log(sch[0].interest > sch[23].interest ? 'PASS' : 'FAIL',
+    'el interes decrece ->', sch[0].interest.toFixed(2), '->', sch[23].interest.toFixed(2));
+  if (!(sch[0].interest > sch[23].interest)) fail++;
+  near(sch[0].date, '2026-02-10', 0, 'primera cuota un mes despues');
+
+  // estado a mitad de camino
+  const liab = { id:'l1', name:'Hipoteca', type:'loan', balance:0, currency:'USD',
+    interestRate:5, linkedAssetId:null, notes:null,
+    principal:100000, termPeriods:24, startDate:'2026-01-10', paymentFrequency:'MONTHLY' };
+  const st = L.loanStatus(liab, '2026-07-15');
+  // del 10/02 al 10/07 inclusive hay seis vencimientos
+  console.log(st.paid === 6 && st.remaining === 18 ? 'PASS' : 'FAIL',
+    'cuotas pagas/restantes ->', st.paid, '/', st.remaining);
+  if (!(st.paid === 6 && st.remaining === 18)) fail++;
+  console.log(st.nextDate === '2026-08-10' ? 'PASS' : 'FAIL', 'proxima cuota ->', st.nextDate);
+  if (st.nextDate !== '2026-08-10') fail++;
+  console.log(st.outstanding < 100000 && st.outstanding > 0 ? 'PASS' : 'FAIL',
+    'saldo hoy ->', st.outstanding.toFixed(2));
+  if (!(st.outstanding < 100000 && st.outstanding > 0)) fail++;
+
+  // sin datos suficientes no se inventa un schedule
+  const plano = L.loanStatus({...liab, principal:null}, '2026-07-15');
+  console.log(!plano.scheduled ? 'PASS' : 'FAIL', 'sin principal no hay schedule');
+  if (plano.scheduled) fail++;
+}
 
 // ---- parsers de precios ----
 // No hay red en el sandbox, asi que se testea la forma de la respuesta, que es

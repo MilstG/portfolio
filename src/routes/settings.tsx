@@ -32,6 +32,7 @@ import {
   backfillSnapshots,
   importBondSchedule,
 } from "@/lib/server/extra-actions";
+import { liabilityBalance } from "@/lib/loans";
 import { formatUsd, parseAmount, toUsd } from "@/lib/utils";
 
 export const Route = createFileRoute("/settings")({
@@ -98,6 +99,10 @@ function SettingsPage() {
   const [liabCur, setLiabCur] = useState("USD");
   const [liabRate, setLiabRate] = useState("");
   const [liabPending, setLiabPending] = useState(false);
+  const [liabPrincipal, setLiabPrincipal] = useState("");
+  const [liabTerm, setLiabTerm] = useState("");
+  const [liabStart, setLiabStart] = useState("");
+  const [liabFreq, setLiabFreq] = useState("MONTHLY");
 
   const [wTicker, setWTicker] = useState("");
   const [wName, setWName] = useState("");
@@ -105,7 +110,7 @@ function SettingsPage() {
   const [wPending, setWPending] = useState(false);
 
   const debtUsd = (data.liabilities || []).reduce(
-    (s, l) => s + toUsd(l.balance, l.currency, data.fx.average),
+    (s, l) => s + toUsd(liabilityBalance(l), l.currency, data.fx.average),
     0,
   );
   const fxHistAsc = [...(data.fxHistory || [])].reverse();
@@ -295,7 +300,9 @@ function SettingsPage() {
                   <div className="min-w-0 flex-1">
                     <span className="text-fg">{l.name}</span>
                     <span className="ml-2 tabular-nums text-loss">
-                      {formatUsd(toUsd(l.balance, l.currency, data.fx.average))}
+                      {formatUsd(
+                        toUsd(liabilityBalance(l), l.currency, data.fx.average),
+                      )}
                     </span>
                     {l.interestRate != null ? (
                       <span className="ml-2 text-subtle">
@@ -352,12 +359,21 @@ function SettingsPage() {
                     balance: bal,
                     currency: liabCur,
                     interestRate: liabRate ? Number(liabRate) : null,
+                    principal: liabPrincipal
+                      ? (parseAmount(liabPrincipal) ?? undefined)
+                      : null,
+                    termPeriods: liabTerm ? Number(liabTerm) : null,
+                    startDate: liabStart || null,
+                    paymentFrequency: liabStart ? liabFreq : null,
                   },
                 });
                 toast.success("Deuda agregada");
                 setLiabName("");
                 setLiabBal("");
                 setLiabRate("");
+                setLiabPrincipal("");
+                setLiabTerm("");
+                setLiabStart("");
                 await router.invalidate();
               } catch (err) {
                 toast.error(err instanceof Error ? err.message : "Error");
@@ -373,6 +389,49 @@ function SettingsPage() {
                 placeholder="Hipoteca / Préstamo"
               />
             </Field>
+
+            {/* Con capital, plazo y fecha de inicio la deuda deja de ser un
+                saldo estático: proyecta cuotas y separa capital de interés. */}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Capital original (opcional)">
+                <Input
+                  value={liabPrincipal}
+                  onChange={(e) => setLiabPrincipal(e.target.value)}
+                  placeholder="100000"
+                />
+              </Field>
+              <Field label="Cuotas totales">
+                <Input
+                  type="number"
+                  min="1"
+                  value={liabTerm}
+                  onChange={(e) => setLiabTerm(e.target.value)}
+                  placeholder="24"
+                />
+              </Field>
+              <Field label="Fecha de inicio">
+                <Input
+                  type="date"
+                  value={liabStart}
+                  onChange={(e) => setLiabStart(e.target.value)}
+                />
+              </Field>
+              <Field label="Frecuencia">
+                <Select
+                  value={liabFreq}
+                  onChange={(e) => setLiabFreq(e.target.value)}
+                >
+                  <option value="MONTHLY">Mensual</option>
+                  <option value="QUARTERLY">Trimestral</option>
+                  <option value="SEMI_ANNUAL">Semestral</option>
+                  <option value="ANNUAL">Anual</option>
+                </Select>
+              </Field>
+            </div>
+            <p className="-mt-1 font-mono text-[10px] text-subtle">
+              Los tres juntos habilitan el cronograma (sistema francés, cuota
+              fija). Sin ellos la deuda queda como un saldo que mantenés a mano.
+            </p>
             <div className="grid grid-cols-3 gap-2">
               <Field label="Balance">
                 <Input

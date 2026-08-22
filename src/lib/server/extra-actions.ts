@@ -16,14 +16,24 @@ export const upsertLiability = createServerFn({ method: "POST" })
       interestRate: z.number().optional().nullable(),
       linkedAssetId: z.string().optional().nullable(),
       notes: z.string().optional().nullable(),
+      /** Amortisation inputs; all optional, all three needed for a schedule. */
+      principal: z.number().positive().finite().optional().nullable(),
+      termPeriods: z.number().int().positive().max(600).optional().nullable(),
+      startDate: z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}/)
+        .optional()
+        .nullable()
+        .or(z.literal("")),
+      paymentFrequency: z.string().max(16).optional().nullable(),
     }),
   )
   .handler(async ({ data }) => {
     const sql = await getSql();
     const id = data.id || crypto.randomUUID();
     await sql.query(
-      `insert into liabilities (id, name, type, balance, currency, interest_rate, linked_asset_id, notes, updated_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$8, now())
+      `insert into liabilities (id, name, type, balance, currency, interest_rate, linked_asset_id, notes, principal, term_periods, start_date, payment_frequency, updated_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now())
        on conflict (id) do update set
          name = excluded.name,
          type = excluded.type,
@@ -32,6 +42,10 @@ export const upsertLiability = createServerFn({ method: "POST" })
          interest_rate = excluded.interest_rate,
          linked_asset_id = excluded.linked_asset_id,
          notes = excluded.notes,
+         principal = excluded.principal,
+         term_periods = excluded.term_periods,
+         start_date = excluded.start_date,
+         payment_frequency = excluded.payment_frequency,
          updated_at = now()`,
       [
         id,
@@ -42,6 +56,10 @@ export const upsertLiability = createServerFn({ method: "POST" })
         data.interestRate ?? null,
         data.linkedAssetId || null,
         data.notes || null,
+        data.principal ?? null,
+        data.termPeriods ?? null,
+        data.startDate || null,
+        data.paymentFrequency || null,
       ],
     );
     return { id };

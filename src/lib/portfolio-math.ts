@@ -1,3 +1,4 @@
+import { liabilityBalance, loanStatus } from "@/lib/loans";
 import { annualFactor, toUsd,
   monthLabel,
 } from "@/lib/utils";
@@ -8,13 +9,14 @@ import type {
   RecurringIncome,
   Snapshot,
   Tx,
+  Liability,
 } from "@/lib/types";
 
 export function netWorthUsd(p: {
   assets: Pick<Asset, "currentValue" | "currency">[];
   accounts: Pick<Account, "balance" | "currency">[];
   fx: { average: number };
-  liabilities?: { balance: number; currency: string }[];
+  liabilities?: Liability[];
 }) {
   const assets = p.assets.reduce(
     (s, a) => s + toUsd(a.currentValue, a.currency, p.fx.average),
@@ -25,9 +27,10 @@ export function netWorthUsd(p: {
     0,
   );
   const debt = (p.liabilities || []).reduce(
-    (s, l) => s + toUsd(l.balance, l.currency, p.fx.average),
+    // Schedule-derived when the loan has one; see liabilityBalance.
+    (s, l) => s + toUsd(liabilityBalance(l), l.currency, p.fx.average),
     0,
-  );
+  );;
   return assets + cash - debt;
 }
 
@@ -216,7 +219,13 @@ export function allocationBuckets(
   return { alloc, total };
 }
 
-export type IncomeKind = "COUPON" | "RENT" | "DIVIDEND" | "AMORT" | "OTHER";
+export type IncomeKind =
+  | "COUPON"
+  | "RENT"
+  | "DIVIDEND"
+  | "AMORT"
+  | "DEBT"
+  | "OTHER";
 
 export const INCOME_KIND_META: Record<
   IncomeKind,
@@ -229,6 +238,8 @@ export const INCOME_KIND_META: Record<
   RENT: { label: "Alquiler", color: "#2dd4bf" },
   DIVIDEND: { label: "Dividendo", color: "#a78bfa" },
   AMORT: { label: "Amortización", color: "#f472b6" },
+  // Money going out, not in — the only negative kind on the calendar.
+  DEBT: { label: "Cuota deuda", color: "#ff5252" },
   OTHER: { label: "Otros", color: "#94a3b8" },
 };
 
@@ -237,6 +248,7 @@ export const INCOME_KINDS: IncomeKind[] = [
   "RENT",
   "DIVIDEND",
   "AMORT",
+  "DEBT",
   "OTHER",
 ];
 
@@ -367,14 +379,48 @@ export function projectScheduledTxs(
 }
 
 /** Merge recurring + future schedule transactions for charts. */
+/**
+ * Loan instalments due in the window, as negative events.
+ *
+ * A debt with a schedule leaves money on a date just like a coupon arrives on
+ * one; the payment calendar was only ever showing the incoming half.
+ */
+export function projectLoanPayments(
+  liabilities: Liability[],
+  fxAvg: number,
+  months = 12,
+): ProjectedEvent[] {
+  const today = new Date().toISOString().slice(0, 10);
+  const end = addMonths(today, months);
+  const out: ProjectedEvent[] = [];
+  for (const l of liabilities) {
+    const status = loanStatus(l, today);
+    if (!status.scheduled) continue;
+    for (const row of status.schedule) {
+      if (row.date <= today || row.date > end) continue;
+      out.push({
+        date: row.date,
+        name: `Cuota ${l.name}`,
+        amountUsd: -toUsd(row.payment, l.currency, fxAvg),
+        frequency: l.paymentFrequency || "MONTHLY",
+        assetId: "",
+        kind: "DEBT",
+      });
+    }
+  }
+  return out;
+}
+
 export function projectCashflow(
   recurring: RecurringIncome[],
   transactions: Tx[],
   fxAvg: number,
   months = 12,
+  liabilities: Liability[] = [],
 ): ProjectedEvent[] {
   const fromRec = projectRecurring(recurring, fxAvg, months);
   const fromTx = projectScheduledTxs(transactions, fxAvg, months);
+  const fromDebt = projectLoanPayments(liabilities, fxAvg, months);
   // Same day + same asset + same amount is the same payment even when the
   // recurring rule and a pre-loaded ledger row spell the name differently
   // ("Cupon" vs "Cupón"). Without an asset, fall back to a normalized name.
@@ -390,6 +436,9 @@ export function projectCashflow(
   const map = new Map<string, ProjectedEvent>();
   for (const e of fromRec) map.set(key(e), e);
   for (const e of fromTx) map.set(key(e), e);
+  // Loan instalments come from their own schedule, so they cannot collide with
+  // an income row and skip the dedup key entirely.
+  for (const e of fromDebt) map.set(`debt|${e.date}|${e.name}`, e);
   return [...map.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
@@ -434,6 +483,7 @@ export type MonthStackRow = {
   RENT: number;
   DIVIDEND: number;
   AMORT: number;
+  DEBT: number;
   OTHER: number;
 };
 
@@ -457,6 +507,7 @@ export function monthlyProjectionStacked(
       RENT: 0,
       DIVIDEND: 0,
       AMORT: 0,
+      DEBT: 0,
       OTHER: 0,
     });
   }
