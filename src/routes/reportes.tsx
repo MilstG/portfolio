@@ -26,17 +26,21 @@ import {
 } from "@/components/ui/monitor";
 import { Pager, usePager } from "@/components/ui/pager";
 import { Tip } from "@/components/ui/tip";
-import { getPortfolio } from "@/lib/server/portfolio";
+import { getPortfolio, getPositionPerformance } from "@/lib/server/portfolio";
 import { INCOME_KIND_META, INCOME_KINDS } from "@/lib/portfolio-math";
 import {
   PERIOD_KINDS,
+  addDaysIso,
   periodFor,
   shiftPeriod,
   type PeriodKind,
 } from "@/lib/report-period";
 import {
+  assetPerformance,
   buildReport,
   periodHistory,
+  type AssetPerformance,
+  type AssetPerformanceRow,
   type HistoryPoint,
   type PeriodReport,
 } from "@/lib/reports";
@@ -70,12 +74,30 @@ export const Route = createFileRoute("/reportes")({
       ...(/^\d{4}-\d{2}-\d{2}$/.test(d) ? { d } : {}),
     };
   },
-  loader: () => getPortfolio(),
+  // The per-position window depends on which period is being shown, so the
+  // loader has to see the search params.
+  loaderDeps: ({ search }) => ({ p: search.p, d: search.d }),
+  loader: async ({ deps }) => {
+    const today = new Date().toISOString().slice(0, 10);
+    const period = periodFor(deps.p ?? "MONTH", deps.d ?? today);
+    const [portfolio, positions] = await Promise.all([
+      getPortfolio(),
+      getPositionPerformance({
+        data: {
+          // The day before: a snapshot dated on day one already contains day
+          // one's movements, so it is a closing value, not an opening one.
+          openDate: addDaysIso(period.start, -1),
+          closeDate: period.end < today ? period.end : today,
+        },
+      }),
+    ]);
+    return { portfolio, positions };
+  },
   component: ReportsPage,
 });
 
 function ReportsPage() {
-  const data = Route.useLoaderData();
+  const { portfolio: data, positions } = Route.useLoaderData();
   const search = Route.useSearch();
   const kind: PeriodKind = search.p ?? "MONTH";
   const today = new Date().toISOString().slice(0, 10);
@@ -88,6 +110,10 @@ function ReportsPage() {
   const history = useMemo(
     () => periodHistory(data, kind, anchor, kind === "QUARTER" ? 8 : 12, today),
     [data, kind, anchor, today],
+  );
+  const perf = useMemo(
+    () => assetPerformance(positions, data.assets),
+    [positions, data.assets],
   );
 
   const prev = shiftPeriod(r.period, -1);
@@ -199,6 +225,8 @@ function ReportsPage() {
         <FlowPanel r={r} />
         <KindPanel r={r} />
       </div>
+
+      <PerformancePanel perf={perf} seriesStart={positions.seriesStart} r={r} />
 
       <HistoryPanel history={history} kind={kind} />
 
@@ -924,6 +952,303 @@ function ComparePanel({ r }: { r: PeriodReport }) {
         </ResponsiveContainer>
       </div>
     </Monitor>
+  );
+}
+
+/* ------------------------------------------------ rendimiento por posición */
+
+/**
+ * What each holding did, with buying and selling taken out of it.
+ *
+ * The reason this panel could not exist before is that only the net worth total
+ * was recorded over time. It now reads two dates of per-position history, and
+ * it will be empty for any period before that history began — which it says,
+ * rather than filling the gap with a number.
+ */
+function PerformancePanel({
+  perf,
+  seriesStart,
+  r,
+}: {
+  perf: AssetPerformance;
+  seriesStart: string | null;
+  r: PeriodReport;
+}) {
+  if (perf.empty) {
+    return (
+      <Monitor title="RENDIMIENTO POR POSICIÓN" emphasis="primary">
+        <p className="py-6 font-mono text-xs leading-relaxed text-muted">
+          {seriesStart == null ? (
+            <>
+              Todavía no hay historial por posición. Se empieza a grabar en el
+              próximo refresh de precios, y desde ahí cada reporte va a poder
+              decir qué ganó y qué perdió cada tenencia.
+            </>
+          ) : (
+            <>
+              El historial por posición arranca el{" "}
+              <span className="text-fg">{seriesStart}</span>. Para medir{" "}
+              {r.period.label} haría falta un registro del{" "}
+              <span className="text-fg">{addDaysIso(r.period.start, -1)}</span>{" "}
+              o anterior, y no existe: lo que valía cada posición antes de esa
+              fecha no quedó grabado en ningún lado, y no se inventa.
+            </>
+          )}
+        </p>
+      </Monitor>
+    );
+  }
+
+  const chart = [...perf.winners].reverse().concat(perf.losers);
+  return (
+    <Monitor
+      title="RENDIMIENTO POR POSICIÓN"
+      emphasis="primary"
+      action={
+        <HelpTip content="Cuánto rindió cada tenencia, sacando lo que se compró y se vendió. Comprar más no es ganar." />
+      }
+    >
+      <div className="grid gap-2 lg:grid-cols-5">
+        <div className="lg:col-span-2">
+          {/* The chart is the extremes, the table is everything — saying so
+              stops the two from looking like they disagree. */}
+          <p className="mb-1 font-mono text-[10px] tracking-[0.14em] text-muted">
+            MAYORES MOVIMIENTOS
+          </p>
+          <div style={{ height: Math.max(140, chart.length * 24 + 20) }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={chart}
+                layout="vertical"
+                margin={{ top: 4, right: 8, left: 4, bottom: 0 }}
+              >
+                <XAxis type="number" hide />
+                <YAxis
+                  type="category"
+                  dataKey={(row: AssetPerformanceRow) => row.ticker || row.name}
+                  width={70}
+                  tick={{
+                    fill: "#9aa0a6",
+                    fontSize: 10,
+                    fontFamily: "IBM Plex Mono",
+                  }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <ReferenceLine x={0} stroke="#2a2a2a" />
+                <Tooltip
+                  cursor={{ fill: "#ffffff0d" }}
+                  contentStyle={CHART_TIP}
+                  content={<PerfTip />}
+                />
+                <Bar dataKey="priceUsd" isAnimationActive={false} barSize={14}>
+                  {chart.map((row) => (
+                    <Cell
+                      key={row.assetId}
+                      fill={row.priceUsd >= 0 ? "#22c55e" : "#ef4444"}
+                    />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        <div className="lg:col-span-3">
+          <p className="mb-1 font-mono text-[10px] tracking-[0.14em] text-muted">
+            TODAS · {perf.rows.length}
+          </p>
+          <TableWrap className="mx-0 max-h-[340px] overflow-y-auto px-0">
+            <table className="w-full font-mono text-[12px]">
+              <thead className="sticky top-0 bg-surface">
+                <tr className="border-b border-border text-left text-[11px] tracking-widest text-accent">
+                  <th className="px-2 py-1">POSICIÓN</th>
+                  <th className="hidden px-2 py-1 text-right md:table-cell">
+                    APERTURA
+                  </th>
+                  <th className="hidden px-2 py-1 text-right md:table-cell">
+                    CIERRE
+                  </th>
+                  <th className="px-2 py-1 text-right">RENDIMIENTO</th>
+                  <th className="px-2 py-1 text-right">%</th>
+                  <th className="hidden px-2 py-1 text-right sm:table-cell">
+                    COMPRA/VENTA
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {perf.rows.map((row) => (
+                  <tr
+                    key={row.assetId}
+                    className="border-b border-border/50 hover:bg-raised/40"
+                  >
+                    <td className="px-2 py-1">
+                      <AssetLink
+                        id={row.assetId}
+                        name={row.ticker || row.name}
+                      />
+                      {row.opened ? (
+                        <span
+                          className="ml-1 text-[10px] text-accent"
+                          title="Se compró dentro del período: no hay apertura contra la cual medir rendimiento."
+                        >
+                          NUEVA
+                        </span>
+                      ) : null}
+                      {row.closed ? (
+                        <span
+                          className="ml-1 text-[10px] text-accent"
+                          title="Ya no está en el libro. La baja se cuenta como venta, no como pérdida."
+                        >
+                          CERRADA
+                        </span>
+                      ) : null}
+                      {row.estimated ? (
+                        <span
+                          className="ml-1 text-[10px] text-loss"
+                          title="Falta la cantidad en alguna de las dos puntas, así que no se puede separar el precio de la compra. Se informa el movimiento entero como precio."
+                        >
+                          SIN CANTIDAD
+                        </span>
+                      ) : null}
+                    </td>
+                    <td className="hidden px-2 py-1 text-right tabular-nums text-subtle md:table-cell">
+                      {row.openUsd == null ? "—" : formatUsd(row.openUsd)}
+                    </td>
+                    <td className="hidden px-2 py-1 text-right tabular-nums text-muted md:table-cell">
+                      {row.closeUsd == null ? "—" : formatUsd(row.closeUsd)}
+                    </td>
+                    <td
+                      className={`px-2 py-1 text-right tabular-nums ${
+                        row.priceUsd > 0
+                          ? "text-gain"
+                          : row.priceUsd < 0
+                            ? "text-loss"
+                            : "text-subtle"
+                      }`}
+                    >
+                      {row.priceUsd === 0 ? "—" : formatUsd(row.priceUsd)}
+                    </td>
+                    <td
+                      className={`px-2 py-1 text-right tabular-nums ${
+                        row.pricePct == null
+                          ? "text-subtle"
+                          : row.pricePct >= 0
+                            ? "text-gain"
+                            : "text-loss"
+                      }`}
+                    >
+                      {row.pricePct == null ? "—" : formatPct(row.pricePct)}
+                    </td>
+                    <td className="hidden px-2 py-1 text-right tabular-nums text-subtle sm:table-cell">
+                      {row.flowUsd === 0 ? "—" : formatUsd(row.flowUsd)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableWrap>
+        </div>
+      </div>
+
+      <div className="mt-1 grid grid-cols-2 gap-x-4 border-t border-line pt-1 font-mono text-[11px] sm:grid-cols-4">
+        <TipRow
+          label="rindió"
+          value={formatUsd(perf.totalPriceUsd)}
+          tone={perf.totalPriceUsd >= 0 ? "gain" : "loss"}
+        />
+        <TipRow
+          label="sobre"
+          value={formatUsd(perf.openBaseUsd)}
+          tone="muted"
+        />
+        <TipRow
+          label="retorno"
+          value={
+            perf.totalPricePct == null ? "—" : formatPct(perf.totalPricePct)
+          }
+          tone={
+            perf.totalPricePct == null
+              ? "muted"
+              : perf.totalPricePct >= 0
+                ? "gain"
+                : "loss"
+          }
+        />
+        <TipRow
+          label="compras netas"
+          value={formatUsd(perf.totalFlowUsd)}
+          tone="muted"
+        />
+      </div>
+      {perf.estimatedCount > 0 ? (
+        <p className="mt-1 font-mono text-[10px] text-loss">
+          {perf.estimatedCount}{" "}
+          {perf.estimatedCount === 1 ? "posición" : "posiciones"} sin cantidad:
+          su movimiento se informa entero como precio. Si le cargaste o sacaste
+          plata en el período, ese número está inflado.
+        </p>
+      ) : null}
+      <p className="mt-1 font-mono text-[10px] text-subtle">
+        RENDIMIENTO es lo que hizo lo que ya tenías; COMPRA/VENTA es lo que
+        entró o salió. Los dos suman la variación total de cada posición.
+      </p>
+    </Monitor>
+  );
+}
+
+function PerfTip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: { payload?: AssetPerformanceRow }[];
+}) {
+  const row = payload?.[0]?.payload;
+  if (!active || !row) return null;
+  return (
+    <div className="z-[100] max-w-xs border border-accent bg-black px-2 py-1.5 font-mono text-[12px] leading-snug text-fg">
+      <p className="mb-1 border-b border-line pb-1 text-accent">
+        {row.ticker || row.name}
+      </p>
+      <TipRow
+        label="apertura"
+        value={row.openUsd == null ? "sin registro" : formatUsd(row.openUsd)}
+        tone="muted"
+      />
+      <TipRow
+        label="cierre"
+        value={row.closeUsd == null ? "sin registro" : formatUsd(row.closeUsd)}
+        tone="muted"
+      />
+      <TipRow
+        label="rendimiento"
+        value={`${formatUsd(row.priceUsd)}${row.pricePct == null ? "" : ` · ${formatPct(row.pricePct)}`}`}
+        tone={row.priceUsd >= 0 ? "gain" : "loss"}
+      />
+      <TipRow
+        label="compra/venta"
+        value={row.flowUsd === 0 ? "—" : formatUsd(row.flowUsd)}
+        tone="muted"
+      />
+      {row.openQty != null && row.closeQty != null ? (
+        <TipRow
+          label="cantidad"
+          value={`${row.openQty.toLocaleString("es-AR")} → ${row.closeQty.toLocaleString("es-AR")}`}
+          tone="muted"
+        />
+      ) : null}
+      {row.estimated ? (
+        <p className="mt-1 border-t border-line pt-1 text-loss">
+          Sin cantidad: no se puede separar el precio de la compra.
+        </p>
+      ) : null}
+      {row.unpriced ? (
+        <p className="mt-1 border-t border-line pt-1 text-loss">
+          Alguna punta se apoyó en el costo por falta de cotización.
+        </p>
+      ) : null}
+    </div>
   );
 }
 

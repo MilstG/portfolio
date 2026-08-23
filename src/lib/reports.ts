@@ -14,7 +14,14 @@ import {
   type IncomeKind,
 } from "@/lib/portfolio-math";
 import { loanPaymentsFor } from "@/lib/loans";
-import type { FxHistoryRow, Portfolio, Snapshot, Tx } from "@/lib/types";
+import type {
+  Asset,
+  FxHistoryRow,
+  PositionPerformanceData,
+  Portfolio,
+  Snapshot,
+  Tx,
+} from "@/lib/types";
 import { toUsd } from "@/lib/utils";
 
 /**
@@ -571,4 +578,166 @@ function addDay(isoDate: string, n: number): string {
   const d = new Date(isoDate + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
+}
+
+/* ------------------------------------------------- rendimiento por posición */
+
+export type AssetPerformanceRow = {
+  assetId: string;
+  name: string;
+  ticker: string | null;
+  type: string;
+  /** Value in USD when the period opened. Null when the position is new. */
+  openUsd: number | null;
+  closeUsd: number | null;
+  openQty: number | null;
+  closeQty: number | null;
+  /** closeUsd - openUsd. The whole move, flows included. */
+  changeUsd: number;
+  /**
+   * The part of the move that is price: what the units held at the open did.
+   * This is the number that answers "how did it do".
+   */
+  priceUsd: number;
+  /** The part of the move that is buying or selling. */
+  flowUsd: number;
+  /** priceUsd over the opening value — a return, not a share of the total. */
+  pricePct: number | null;
+  /** True when the position had no row at the open: nothing to measure against. */
+  opened: boolean;
+  /** True when it has no row at the close: sold, or deleted. */
+  closed: boolean;
+  /**
+   * True when the split between price and flow could not be made because a
+   * quantity is missing on one of the two ends. The whole move is then reported
+   * as price, which is right for a holding whose size did not change and wrong
+   * for one that was topped up — so it is flagged rather than assumed.
+   */
+  estimated: boolean;
+  /** Either end of the move rested on a value with no live quote behind it. */
+  unpriced: boolean;
+};
+
+export type AssetPerformance = {
+  rows: AssetPerformanceRow[];
+  /** Sum of priceUsd across positions: what the book earned on what it held. */
+  totalPriceUsd: number;
+  totalFlowUsd: number;
+  totalChangeUsd: number;
+  /** Opening value of the positions that had one, for a weighted return. */
+  openBaseUsd: number;
+  totalPricePct: number | null;
+  winners: AssetPerformanceRow[];
+  losers: AssetPerformanceRow[];
+  /** Rows whose split had to be assumed. */
+  estimatedCount: number;
+  /** No usable opening snapshot at all: the panel has nothing to say. */
+  empty: boolean;
+};
+
+/**
+ * What each position did between two dates.
+ *
+ * The move in a holding's value has two causes and they mean different things:
+ * the price changed, or its size changed because it was bought or sold. Adding
+ * USD 10,000 of a bond is not a USD 10,000 gain, and a report that reads
+ * `close - open` as performance says it is.
+ *
+ * The split is exact when both ends have a quantity:
+ *
+ *   price = qtyOpen * (priceClose - priceOpen)
+ *   flow  = (qtyClose - qtyOpen) * priceClose
+ *   price + flow = closeValue - openValue
+ *
+ * With a quantity missing on either end there is nothing to split on. The move
+ * is then reported whole as price — correct for a position whose size did not
+ * change, which is the common case for property and for anything held — and the
+ * row is marked `estimated` so a topped-up holding is not read as a rally.
+ */
+export function assetPerformance(
+  data: PositionPerformanceData,
+  assets: Asset[],
+): AssetPerformance {
+  const openBy = new Map(data.open.map((r) => [r.assetId, r]));
+  const closeBy = new Map(data.close.map((r) => [r.assetId, r]));
+  const meta = new Map(assets.map((a) => [a.id, a]));
+
+  const ids = new Set<string>([...openBy.keys(), ...closeBy.keys()]);
+  const rows: AssetPerformanceRow[] = [];
+  for (const id of ids) {
+    const o = openBy.get(id) ?? null;
+    const c = closeBy.get(id) ?? null;
+    const a = meta.get(id);
+    // A snapshot for an asset that no longer exists still describes a real
+    // move; it is named from the snapshot rather than dropped.
+    const openUsd = o?.valueUsd ?? null;
+    const closeUsd = c?.valueUsd ?? null;
+    const changeUsd = (closeUsd ?? 0) - (openUsd ?? 0);
+
+    let priceUsd = changeUsd;
+    let flowUsd = 0;
+    let estimated = true;
+    if (o && c && o.quantity != null && c.quantity != null && o.quantity > 0) {
+      const unitOpen = o.valueUsd / o.quantity;
+      const unitClose = c.quantity > 0 ? c.valueUsd / c.quantity : unitOpen;
+      priceUsd = o.quantity * (unitClose - unitOpen);
+      flowUsd = (c.quantity - o.quantity) * unitClose;
+      estimated = false;
+    } else if (!o) {
+      // Bought during the period: the entire value is money that came in, not
+      // a gain. Reporting it as performance would make every new position the
+      // best performer of the month.
+      priceUsd = 0;
+      flowUsd = changeUsd;
+      estimated = false;
+    } else if (!c) {
+      // Gone from the book. Whether it was sold or deleted is not recorded, so
+      // the drop is a flow, not a loss.
+      priceUsd = 0;
+      flowUsd = changeUsd;
+      estimated = false;
+    }
+
+    rows.push({
+      assetId: id,
+      name: a?.name ?? "Posición eliminada",
+      ticker: a?.ticker ?? null,
+      type: a?.type ?? "OTHER",
+      openUsd,
+      closeUsd,
+      openQty: o?.quantity ?? null,
+      closeQty: c?.quantity ?? null,
+      changeUsd,
+      priceUsd,
+      flowUsd,
+      pricePct:
+        openUsd != null && openUsd > 0 ? (priceUsd / openUsd) * 100 : null,
+      opened: !o,
+      closed: !c,
+      estimated,
+      unpriced: Boolean(o?.unpriced || c?.unpriced),
+    });
+  }
+
+  rows.sort((a, b) => b.priceUsd - a.priceUsd);
+  const held = rows.filter((r) => !r.opened && !r.closed);
+  const openBaseUsd = held.reduce((s, r) => s + (r.openUsd ?? 0), 0);
+  const totalPriceUsd = rows.reduce((s, r) => s + r.priceUsd, 0);
+  const ranked = rows.filter((r) => r.pricePct != null && !r.opened);
+  return {
+    rows,
+    totalPriceUsd,
+    totalFlowUsd: rows.reduce((s, r) => s + r.flowUsd, 0),
+    totalChangeUsd: rows.reduce((s, r) => s + r.changeUsd, 0),
+    openBaseUsd,
+    totalPricePct: openBaseUsd > 0 ? (totalPriceUsd / openBaseUsd) * 100 : null,
+    winners: ranked.filter((r) => r.priceUsd > 0).slice(0, 6),
+    // Ascending, so the worst is first rather than buried at the end.
+    losers: ranked
+      .filter((r) => r.priceUsd < 0)
+      .sort((a, b) => a.priceUsd - b.priceUsd)
+      .slice(0, 6),
+    estimatedCount: rows.filter((r) => r.estimated).length,
+    empty: data.open.length === 0,
+  };
 }

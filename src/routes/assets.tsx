@@ -5,7 +5,8 @@ import {
   Bar,
   BarChart,
   Cell,
-  ReferenceLine,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -26,28 +27,44 @@ import { TipRow } from "@/components/ui/asset-link";
 import { Button } from "@/components/ui/button";
 import { deleteAsset, getPortfolio, upsertAsset } from "@/lib/server/portfolio";
 import {
+  categoryPies,
+  flowProjection,
   formatUnitPrice,
-  positionBreakdown,
   positionRows,
   positionStats,
+  type CategoryPie,
+  type FlowProjection,
   type PositionRow,
 } from "@/lib/positions";
 import type { Asset } from "@/lib/types";
-import { ASSET_TYPES, formatPct, formatUsd } from "@/lib/utils";
+import { assetReturns } from "@/lib/returns";
+import { projectCashflow } from "@/lib/portfolio-math";
+import { ASSET_TYPES, formatPct, formatUsd, monthLabel } from "@/lib/utils";
 
 const TYPE_VALUES = ASSET_TYPES.map((t) => t.value) as readonly string[];
 const TYPE_LABELS: Record<string, string> = Object.fromEntries(
   ASSET_TYPES.map((t) => [t.value, t.label]),
 );
 
-/** Same categorical ramp as the dashboard; see COLORS in routes/index.tsx. */
-const COLORS = [
+/**
+ * Extends the dashboard's six-colour ramp (COLORS in routes/index.tsx) with six
+ * more: a class holding thirteen bonds would otherwise repeat a colour inside a
+ * single donut, making two different positions look like one. Still no accent
+ * orange and no P&L green or red — those already mean something else.
+ */
+const SLICE_COLORS = [
   "#4aa3ff",
   "#a78bfa",
   "#f5d565",
   "#2dd4bf",
   "#f472b6",
   "#94a3b8",
+  "#60a5fa",
+  "#c4b5fd",
+  "#fbbf24",
+  "#5eead4",
+  "#fb7185",
+  "#cbd5e1",
 ];
 
 const CHART_TIP = {
@@ -84,15 +101,65 @@ function AssetsPage() {
   const filter = type ?? "ALL";
 
   const fx = data.fx.average;
+
+  // Rent and coupons already collected per position, plus what each is
+  // contracted to pay: appreciation alone says a flat that paid two years of
+  // rent did nothing.
+  const projected = useMemo(
+    () =>
+      projectCashflow(
+        data.recurring,
+        data.transactions,
+        fx,
+        12,
+        data.liabilities,
+      ),
+    [data.recurring, data.transactions, fx, data.liabilities],
+  );
+  const income = useMemo(() => {
+    const projectedByAsset = new Map<string, number>();
+    for (const e of projected) {
+      if (!e.assetId || e.amountUsd <= 0) continue;
+      projectedByAsset.set(
+        e.assetId,
+        (projectedByAsset.get(e.assetId) ?? 0) + e.amountUsd,
+      );
+    }
+    const map = new Map<
+      string,
+      { incomeUsd: number; projectedIncomeUsd: number }
+    >();
+    for (const r of assetReturns(
+      data.assets,
+      data.transactions,
+      fx,
+      undefined,
+      projectedByAsset,
+    )) {
+      map.set(r.id, {
+        incomeUsd: r.incomeUsd,
+        projectedIncomeUsd: r.projectedIncomeUsd,
+      });
+    }
+    return map;
+  }, [data.assets, data.transactions, fx, projected]);
+
   const rows = useMemo(() => {
-    const all = positionRows(data.assets, fx, TYPE_LABELS);
+    const all = positionRows(data.assets, fx, TYPE_LABELS, income);
     return filter === "ALL" ? all : all.filter((r) => r.asset.type === filter);
-  }, [data.assets, fx, filter]);
+  }, [data.assets, fx, filter, income]);
 
   const stats = useMemo(() => positionStats(rows), [rows]);
-  const slices = useMemo(
-    () => positionBreakdown(rows, filter === "ALL" ? "type" : "position"),
-    [rows, filter],
+  const pies = useMemo(() => categoryPies(rows), [rows]);
+  const flows = useMemo(
+    () =>
+      flowProjection(
+        projected,
+        new Set(rows.map((r) => r.asset.id)),
+        monthLabel,
+        rows.reduce((s, r) => s + r.valueUsd, 0),
+      ),
+    [projected, rows],
   );
 
   const pager = usePager(rows, 25);
@@ -140,7 +207,7 @@ function AssetsPage() {
 
       <Monitor title="POSITIONS" bodyClassName="p-0">
         <TableWrap className="mx-0 px-0">
-          <table className="w-full font-mono text-[12px] md:min-w-[820px]">
+          <table className="w-full font-mono text-[12px] md:min-w-[960px]">
             <thead>
               <tr className="border-b border-border text-left text-[11px] tracking-widest text-accent">
                 <th className="px-2 py-1.5">NAME</th>
@@ -158,7 +225,11 @@ function AssetsPage() {
                   COST
                 </th>
                 <th className="px-2 py-1.5 text-right">VALUE</th>
+                <th className="hidden px-2 py-1.5 text-right lg:table-cell">
+                  RENTA
+                </th>
                 <th className="px-2 py-1.5 text-right">P&L</th>
+                <th className="px-2 py-1.5 text-right">TOTAL</th>
                 <th className="hidden px-2 py-1.5 text-right sm:table-cell">
                   WGT
                 </th>
@@ -213,12 +284,60 @@ function AssetsPage() {
                         </span>
                       ) : null}
                     </td>
+                    <td className="hidden px-2 py-1.5 text-right tabular-nums lg:table-cell">
+                      {r.incomeUsd > 0 || r.projectedIncomeUsd > 0 ? (
+                        <Tip
+                          inline
+                          content={
+                            <div className="space-y-0.5">
+                              <p className="mb-1 border-b border-line pb-1 text-accent">
+                                RENTA
+                              </p>
+                              <TipRow
+                                label="cobrado"
+                                value={formatUsd(r.incomeUsd)}
+                                tone="gain"
+                              />
+                              <TipRow
+                                label="agendado 12M"
+                                value={formatUsd(r.projectedIncomeUsd)}
+                                tone="muted"
+                              />
+                              <p className="mt-1 border-t border-line pt-1 text-subtle">
+                                Cobrado desde la compra. No entra en P&L, que es
+                                sólo precio; los dos juntos son TOTAL.
+                              </p>
+                            </div>
+                          }
+                        >
+                          <span
+                            className={
+                              r.incomeUsd > 0 ? "text-gain" : "text-subtle"
+                            }
+                          >
+                            {r.incomeUsd > 0 ? formatUsd(r.incomeUsd) : "—"}
+                          </span>
+                        </Tip>
+                      ) : (
+                        <span className="text-subtle">—</span>
+                      )}
+                    </td>
                     <td
                       className={`px-2 py-1.5 text-right tabular-nums ${r.pnlUsd >= 0 ? "text-gain" : "text-loss"}`}
+                      title="Sólo precio: valor actual contra costo. No incluye alquileres ni cupones cobrados."
                     >
                       {formatUsd(r.pnlUsd)}
                       <span className="block text-[11px] opacity-80 sm:ml-1 sm:inline">
                         {formatPct(r.pnlPct)}
+                      </span>
+                    </td>
+                    <td
+                      className={`px-2 py-1.5 text-right tabular-nums ${r.totalUsd >= 0 ? "text-gain" : "text-loss"}`}
+                      title="Precio más renta cobrada: lo que la posición realmente rindió."
+                    >
+                      {formatUsd(r.totalUsd)}
+                      <span className="block text-[11px] opacity-80 sm:ml-1 sm:inline">
+                        {r.totalPct == null ? "—" : formatPct(r.totalPct)}
                       </span>
                     </td>
                     <td className="hidden px-2 py-1.5 text-right tabular-nums text-subtle sm:table-cell">
@@ -277,7 +396,12 @@ function AssetsPage() {
       </Monitor>
 
       {rows.length > 0 ? (
-        <Breakdown filter={filter} slices={slices} stats={stats} />
+        <>
+          <Breakdown filter={filter} pies={pies} stats={stats} />
+          {flows.eventCount > 0 ? (
+            <FlowsPanel flows={flows} filter={filter} />
+          ) : null}
+        </>
       ) : null}
 
       {editing !== null ? (
@@ -432,128 +556,39 @@ function Stat({
   );
 }
 
-type Slice = ReturnType<typeof positionBreakdown>[number];
-
-/** Value and P&L side by side, plus the totals for the current filter. */
+/**
+ * A donut per asset class, each split into the positions inside it.
+ *
+ * This replaced a bar chart of value per position, which drew the same numbers
+ * the table right above it already listed — a picture of a column is not a
+ * breakdown. The question a holder actually has is what each class is made of:
+ * of my crypto, how much is BTC. So the slice percentages are shares of their
+ * own category, and the category's share of the book is stated once, on the
+ * header, where it cannot be confused with them.
+ */
 function Breakdown({
   filter,
-  slices,
+  pies,
   stats,
 }: {
   filter: string;
-  slices: Slice[];
+  pies: CategoryPie[];
   stats: ReturnType<typeof positionStats>;
 }) {
-  // A long tail of tiny positions turns the chart into a row of hairlines; the
-  // rest is folded into one bar so the total still adds up.
-  const MAX_BARS = 8;
-  const shown = slices.slice(0, MAX_BARS);
-  const rest = slices.slice(MAX_BARS);
-  const restValue = rest.reduce((s, r) => s + r.valueUsd, 0);
-  const restCost = rest.reduce((s, r) => s + r.costUsd, 0);
-  const chart =
-    rest.length > 0
-      ? [
-          ...shown,
-          {
-            key: "__rest",
-            label: `+${rest.length} más`,
-            valueUsd: restValue,
-            costUsd: restCost,
-            pnlUsd: rest.reduce((s, r) => s + r.pnlUsd, 0),
-            pnlPct:
-              restCost > 0 ? ((restValue - restCost) / restCost) * 100 : 0,
-            weightPct: rest.reduce((s, r) => s + r.weightPct, 0),
-            count: rest.length,
-          },
-        ]
-      : shown;
-
-  const label = filter === "ALL" ? "clase" : "posición";
-  const height = Math.max(120, chart.length * 22 + 24);
-
   return (
-    <div className="grid gap-2 lg:grid-cols-3">
-      <Monitor
-        title={`VALOR POR ${filter === "ALL" ? "CLASE" : "POSICIÓN"}`}
-        className="lg:col-span-2"
-        action={
-          <HelpTip
-            content={`Valor en USD de cada ${label} dentro del filtro activo. Hover para costo, P&L y peso.`}
-          />
-        }
+    <div className="flex flex-col gap-2">
+      <div
+        className={`grid items-start gap-2 ${
+          pies.length === 1 ? "grid-cols-1" : "sm:grid-cols-2 xl:grid-cols-3"
+        }`}
       >
-        <div style={{ height }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart
-              data={chart}
-              layout="vertical"
-              margin={{ top: 4, right: 12, left: 4, bottom: 0 }}
-            >
-              <XAxis type="number" hide />
-              <YAxis
-                type="category"
-                dataKey="label"
-                width={82}
-                tick={{
-                  fill: "#9aa0a6",
-                  fontSize: 10,
-                  fontFamily: "IBM Plex Mono",
-                }}
-                axisLine={false}
-                tickLine={false}
-              />
-              <Tooltip
-                cursor={{ fill: "#ffffff0d" }}
-                contentStyle={CHART_TIP}
-                content={<SliceTip />}
-              />
-              <Bar dataKey="valueUsd" isAnimationActive={false} barSize={14}>
-                {chart.map((s, i) => (
-                  <Cell key={s.key} fill={COLORS[i % COLORS.length]} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </Monitor>
+        {pies.map((pie) => (
+          <CategoryDonut key={pie.type} pie={pie} solo={pies.length === 1} />
+        ))}
+      </div>
 
-      <Monitor
-        title="P&L"
-        action={
-          <HelpTip content="P&L no realizado por cada barra del gráfico de al lado: valor actual menos costo. La línea es el cero." />
-        }
-      >
-        <div style={{ height }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart
-              data={chart}
-              layout="vertical"
-              margin={{ top: 4, right: 8, left: 4, bottom: 0 }}
-            >
-              <XAxis type="number" hide />
-              <YAxis type="category" dataKey="label" hide />
-              <ReferenceLine x={0} stroke="#2a2a2a" />
-              <Tooltip
-                cursor={{ fill: "#ffffff0d" }}
-                contentStyle={CHART_TIP}
-                content={<SliceTip />}
-              />
-              <Bar dataKey="pnlUsd" isAnimationActive={false} barSize={14}>
-                {chart.map((s) => (
-                  <Cell
-                    key={s.key}
-                    fill={s.pnlUsd >= 0 ? "#22c55e" : "#ef4444"}
-                  />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </Monitor>
-
-      <Monitor title="STATS" className="lg:col-span-3" bodyClassName="p-2">
-        <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-6">
+      <Monitor title="STATS" bodyClassName="p-2">
+        <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8">
           <Stat
             label="VALOR"
             value={formatUsd(stats.valueUsd)}
@@ -561,12 +596,32 @@ function Breakdown({
           />
           <Stat label="COSTO" value={formatUsd(stats.costUsd)} />
           <Stat
-            label="P&L"
+            label="P&L PRECIO"
             value={formatUsd(stats.pnlUsd)}
             sub={
               stats.costUsd > 0 ? formatPct(stats.pnlPct) : "sin costo cargado"
             }
             tone={stats.pnlUsd >= 0 ? "gain" : "loss"}
+          />
+          <Stat
+            label="RENTA COBRADA"
+            value={formatUsd(stats.incomeUsd)}
+            sub={
+              stats.projectedIncomeUsd > 0
+                ? `${formatUsd(stats.projectedIncomeUsd)} agendado 12M`
+                : "sin cobros registrados"
+            }
+            tone={stats.incomeUsd > 0 ? "gain" : undefined}
+          />
+          <Stat
+            label="RETORNO TOTAL"
+            value={formatUsd(stats.totalUsd)}
+            sub={
+              stats.totalPct == null
+                ? "precio + renta"
+                : `${formatPct(stats.totalPct)} · precio + renta`
+            }
+            tone={stats.totalUsd >= 0 ? "gain" : "loss"}
           />
           <Stat
             label="MEJOR"
@@ -610,38 +665,344 @@ function Breakdown({
           </p>
         ) : null}
         <p className="mt-1 font-mono text-[10px] text-subtle">
-          Todo en USD al FX promedio; los precios unitarios quedan en la moneda
-          de cada posición.
+          {filter === "ALL"
+            ? "Cada torta reparte una clase entre sus posiciones: los % son de esa clase, no del patrimonio."
+            : "Los % son de esta clase. Todo en USD al FX promedio."}
         </p>
       </Monitor>
     </div>
   );
 }
 
-/** Shared tooltip for both breakdown charts. */
-function SliceTip({
+/** Slices past this become one "resto" wedge; the legend still lists them all. */
+const MAX_SLICES = 9;
+
+function CategoryDonut({ pie, solo }: { pie: CategoryPie; solo: boolean }) {
+  const head = pie.items.slice(0, MAX_SLICES);
+  const tail = pie.items.slice(MAX_SLICES);
+  const slices =
+    tail.length > 0
+      ? [
+          ...head,
+          {
+            id: "__rest",
+            label: `+${tail.length} más`,
+            valueUsd: tail.reduce((s, i) => s + i.valueUsd, 0),
+            pnlUsd: tail.reduce((s, i) => s + i.pnlUsd, 0),
+            pnlPct: 0,
+            pct: tail.reduce((s, i) => s + i.pct, 0),
+            unpriced: false,
+          },
+        ]
+      : head;
+
+  return (
+    <Monitor
+      title={pie.label.toUpperCase()}
+      action={
+        <span className="font-mono text-[10px] tracking-widest text-subtle">
+          {pie.bookPct.toFixed(1)}% DEL LIBRO
+        </span>
+      }
+    >
+      <div
+        className={`flex flex-col items-center gap-3 ${solo ? "sm:flex-row sm:items-start" : ""}`}
+      >
+        <div className="relative h-[150px] w-[150px] shrink-0">
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie
+                data={slices}
+                dataKey="valueUsd"
+                nameKey="label"
+                cx="50%"
+                cy="50%"
+                innerRadius={44}
+                outerRadius={70}
+                paddingAngle={slices.length > 1 ? 2 : 0}
+                stroke="#0a0a0a"
+                strokeWidth={2}
+                isAnimationActive={false}
+              >
+                {slices.map((s, i) => (
+                  <Cell
+                    key={s.id}
+                    fill={SLICE_COLORS[i % SLICE_COLORS.length]}
+                  />
+                ))}
+              </Pie>
+              <Tooltip contentStyle={CHART_TIP} content={<ItemTip />} />
+            </PieChart>
+          </ResponsiveContainer>
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+            <span className="font-mono text-[9px] tracking-[0.14em] text-muted">
+              {pie.items.length} {pie.items.length === 1 ? "POS" : "POS"}
+            </span>
+            <span className="font-mono text-[12px] tabular-nums text-fg">
+              {formatUsd(pie.valueUsd)}
+            </span>
+            <span
+              className={`font-mono text-[10px] tabular-nums ${pie.pnlUsd >= 0 ? "text-gain" : "text-loss"}`}
+            >
+              {pie.costUsd > 0
+                ? formatPct(((pie.valueUsd - pie.costUsd) / pie.costUsd) * 100)
+                : "—"}
+            </span>
+          </div>
+        </div>
+
+        {/* Every item, not just the ones that got their own wedge. On its own
+            the panel has the width for two columns and no reason to clip; in
+            the grid the list scrolls, capped a little above the donut so a cut
+            row is visibly a cut row rather than a list that ends there. */}
+        <ul
+          className={
+            solo
+              ? "w-full min-w-0 flex-1 space-y-0.5 sm:columns-2 sm:gap-x-6 sm:space-y-0"
+              : "max-h-[168px] w-full min-w-0 flex-1 space-y-0.5 overflow-y-auto"
+          }
+        >
+          {pie.items.map((item, i) => (
+            <li
+              key={item.id}
+              className={`flex items-center gap-1.5 font-mono text-[11px] ${
+                solo ? "break-inside-avoid py-px" : ""
+              }`}
+            >
+              <span
+                className="size-2 shrink-0"
+                style={{
+                  background:
+                    i < MAX_SLICES
+                      ? SLICE_COLORS[i % SLICE_COLORS.length]
+                      : SLICE_COLORS[MAX_SLICES % SLICE_COLORS.length],
+                }}
+              />
+              <Link
+                to="/assets/$id"
+                params={{ id: item.id }}
+                className="min-w-0 flex-1 truncate text-muted hover:text-accent"
+              >
+                {item.label}
+                {item.unpriced ? (
+                  <span className="ml-1 text-[9px] text-loss">S/P</span>
+                ) : null}
+              </Link>
+              <span className="w-11 shrink-0 text-right tabular-nums text-fg">
+                {item.pct.toFixed(1)}%
+              </span>
+              <span className="w-16 shrink-0 text-right tabular-nums text-subtle">
+                {formatUsd(item.valueUsd)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+      {!solo && pie.items.length > MAX_SLICES ? (
+        // Without this the list just stops at whatever row the box cuts, which
+        // reads as "that is all of them".
+        <p className="mt-1 border-t border-line pt-1 font-mono text-[10px] text-subtle">
+          {pie.items.length} posiciones · scrolleá la lista para verlas todas
+        </p>
+      ) : null}
+    </Monitor>
+  );
+}
+
+type PieItem = CategoryPie["items"][number];
+
+function ItemTip({
   active,
   payload,
 }: {
   active?: boolean;
-  payload?: { payload?: Slice }[];
+  payload?: { payload?: PieItem }[];
 }) {
-  const s = payload?.[0]?.payload;
-  if (!active || !s) return null;
+  const item = payload?.[0]?.payload;
+  if (!active || !item) return null;
   return (
     <div className="z-[100] max-w-xs border border-accent bg-black px-2 py-1.5 font-mono text-[12px] leading-snug text-fg">
-      <p className="mb-1 border-b border-line pb-1 text-accent">{s.label}</p>
-      <TipRow label="valor" value={formatUsd(s.valueUsd)} />
-      <TipRow label="costo" value={formatUsd(s.costUsd)} tone="muted" />
+      <p className="mb-1 border-b border-line pb-1 text-accent">{item.label}</p>
+      <TipRow label="valor" value={formatUsd(item.valueUsd)} />
       <TipRow
-        label="P&L"
-        value={`${formatUsd(s.pnlUsd)}${s.costUsd > 0 ? ` · ${formatPct(s.pnlPct)}` : ""}`}
-        tone={s.pnlUsd >= 0 ? "gain" : "loss"}
+        label="de la clase"
+        value={`${item.pct.toFixed(1)}%`}
+        tone="muted"
       />
-      <TipRow label="peso" value={`${s.weightPct.toFixed(1)}%`} tone="muted" />
-      {s.count > 1 ? (
-        <TipRow label="posiciones" value={String(s.count)} tone="muted" />
-      ) : null}
+      {item.id !== "__rest" ? (
+        <TipRow
+          label="P&L"
+          value={`${formatUsd(item.pnlUsd)} · ${formatPct(item.pnlPct)}`}
+          tone={item.pnlUsd >= 0 ? "gain" : "loss"}
+        />
+      ) : (
+        <TipRow
+          label="P&L"
+          value={formatUsd(item.pnlUsd)}
+          tone={item.pnlUsd >= 0 ? "gain" : "loss"}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------- flujos proyectados */
+
+/**
+ * What the positions on screen are contracted to pay over the next year.
+ *
+ * The average is per paying month rather than per calendar month: a book of
+ * semi-annual ONs pays in two months out of twelve, and "$X per month" would
+ * describe an income that never actually arrives on ten of them.
+ */
+function FlowsPanel({
+  flows,
+  filter,
+}: {
+  flows: FlowProjection;
+  filter: string;
+}) {
+  const what =
+    filter === "BOND"
+      ? "cupones y amortizaciones"
+      : filter === "REAL_ESTATE"
+        ? "alquileres"
+        : "cobros";
+  return (
+    <Monitor
+      title="FLUJOS PROYECTADOS 12M"
+      action={
+        <HelpTip
+          content={`${what[0].toUpperCase()}${what.slice(1)} ya agendados para los próximos 12 meses, desde el calendario y los flujos recurrentes. Es un plan, no plata cobrada.`}
+        />
+      }
+    >
+      <div className="grid gap-2 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <div className="h-[320px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={flows.months}
+                margin={{ top: 4, right: 8, left: 0, bottom: 0 }}
+              >
+                <XAxis
+                  dataKey="label"
+                  tick={{
+                    fill: "#6b7280",
+                    fontSize: 9,
+                    fontFamily: "IBM Plex Mono",
+                  }}
+                  axisLine={false}
+                  tickLine={false}
+                  minTickGap={6}
+                />
+                <YAxis
+                  width={48}
+                  tick={{
+                    fill: "#6b7280",
+                    fontSize: 10,
+                    fontFamily: "IBM Plex Mono",
+                  }}
+                  axisLine={false}
+                  tickLine={false}
+                  tickFormatter={(v: number) => formatUsd(v)}
+                />
+                <Tooltip
+                  cursor={{ fill: "#ffffff0d" }}
+                  contentStyle={CHART_TIP}
+                  content={<FlowTip />}
+                />
+                <Bar
+                  dataKey="totalUsd"
+                  fill="#2dd4bf"
+                  isAnimationActive={false}
+                  maxBarSize={40}
+                />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        <TableWrap className="mx-0 max-h-[320px] overflow-y-auto px-0">
+          <table className="w-full font-mono text-[12px]">
+            <thead className="sticky top-0 bg-surface">
+              <tr className="border-b border-border text-left text-[11px] tracking-widest text-accent">
+                <th className="px-2 py-1">MES</th>
+                <th className="px-2 py-1">QUIÉN PAGA</th>
+                <th className="px-2 py-1 text-right">USD</th>
+              </tr>
+            </thead>
+            <tbody>
+              {flows.months.map((m) => (
+                <tr
+                  key={m.key}
+                  className="border-b border-border/50 hover:bg-raised/40"
+                >
+                  <td className="px-2 py-1 whitespace-nowrap text-subtle">
+                    {m.label}
+                  </td>
+                  <td className="px-2 py-1 text-muted">
+                    <span className="line-clamp-2">
+                      {m.items.map((i) => i.name).join(", ")}
+                    </span>
+                  </td>
+                  <td className="px-2 py-1 text-right tabular-nums text-gain">
+                    {formatUsd(m.totalUsd)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableWrap>
+      </div>
+
+      <div className="mt-1 grid grid-cols-2 gap-x-4 border-t border-line pt-1 font-mono text-[11px] sm:grid-cols-4">
+        <TipRow
+          label="total 12M"
+          value={formatUsd(flows.totalUsd)}
+          tone="gain"
+        />
+        <TipRow
+          label={`prom. de ${flows.payingMonths} ${flows.payingMonths === 1 ? "mes que paga" : "meses que pagan"}`}
+          value={formatUsd(flows.avgPerPayingMonth)}
+        />
+        <TipRow
+          label="pico"
+          value={
+            flows.peak
+              ? `${flows.peak.label} · ${formatUsd(flows.peak.totalUsd)}`
+              : "—"
+          }
+          tone="muted"
+        />
+        <TipRow
+          label="yield sobre valor"
+          value={flows.yieldPct == null ? "—" : `${flows.yieldPct.toFixed(1)}%`}
+          tone="muted"
+        />
+      </div>
+    </Monitor>
+  );
+}
+
+function FlowTip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: { payload?: FlowProjection["months"][number] }[];
+}) {
+  const m = payload?.[0]?.payload;
+  if (!active || !m) return null;
+  return (
+    <div className="z-[100] max-w-xs border border-accent bg-black px-2 py-1.5 font-mono text-[12px] leading-snug text-fg">
+      <p className="mb-1 border-b border-line pb-1 text-accent">{m.label}</p>
+      {m.items.map((i) => (
+        <TipRow key={i.assetId} label={i.name} value={formatUsd(i.amountUsd)} />
+      ))}
+      <div className="mt-1 border-t border-line pt-1">
+        <TipRow label="TOTAL" value={formatUsd(m.totalUsd)} tone="gain" />
+      </div>
     </div>
   );
 }

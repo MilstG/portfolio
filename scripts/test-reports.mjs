@@ -3,7 +3,7 @@ const server = await createServer({ server:{ middlewareMode:true }, appType:'cus
 const {
   periodFor, shiftPeriod, bucketsFor, addDaysIso, daysBetween,
 } = await server.ssrLoadModule('/src/lib/report-period.ts');
-const { buildReport, classifyTx, fxAsOf, periodHistory } = await server.ssrLoadModule('/src/lib/reports.ts');
+const { buildReport, classifyTx, fxAsOf, periodHistory, assetPerformance } = await server.ssrLoadModule('/src/lib/reports.ts');
 
 let fail = 0;
 const eq = (a, b, label) => {
@@ -236,6 +236,102 @@ near(hist[2].incomeUsd, 1690, 1e-9, 'histórico: agosto cuenta sólo lo cobrado'
 near(hist[0].incomeUsd, 0, 1e-9, 'histórico: junio sin movimientos');
 eq(hist[1].nwClose, 100000, 'histórico: NW al cierre de julio');
 eq(hist[0].nwClose, null, 'histórico: junio sin snapshot');
+
+/* ------------------------------------------------ rendimiento por posición */
+const snap = (assetId, valueUsd, quantity, extra = {}) => ({
+  assetId, date: '2026-08-01', valueUsd, quantity,
+  costBasis: extra.costBasis ?? 0, unpriced: extra.unpriced ?? false,
+});
+const perfAssets = [
+  { id: 'h', name: 'Held', ticker: 'HELD', type: 'STOCK' },
+  { id: 'g', name: 'Grew', ticker: 'GREW', type: 'CRYPTO' },
+  { id: 'n', name: 'New', ticker: 'NEW', type: 'BOND' },
+  { id: 's', name: 'Sold', ticker: 'SOLD', type: 'STOCK' },
+  { id: 'p', name: 'Depto', ticker: null, type: 'REAL_ESTATE' },
+];
+const perf = assetPerformance({
+  seriesStart: '2026-08-01',
+  open: [
+    snap('h', 1000, 100),          // 100 @ 10
+    snap('g', 1000, 100),          // 100 @ 10, después compra más
+    snap('s', 500, 50),            // 50 @ 10, se vende entero
+    snap('p', 120000, null),       // sin cantidad
+  ],
+  close: [
+    { ...snap('h', 1200, 100), date: '2026-08-31' },   // 100 @ 12
+    { ...snap('g', 1800, 150), date: '2026-08-31' },   // 150 @ 12
+    { ...snap('n', 5000, 500), date: '2026-08-31' },   // comprado en el período
+    { ...snap('p', 126000, null), date: '2026-08-31' },
+  ],
+}, perfAssets);
+
+const byId = Object.fromEntries(perf.rows.map(r => [r.assetId, r]));
+
+// Tenencia intacta: todo el movimiento es precio.
+near(byId.h.priceUsd, 200, 1e-9, 'held: 100 unidades que subieron 2');
+near(byId.h.flowUsd, 0, 1e-9, 'held: sin flujo');
+near(byId.h.pricePct, 20, 1e-9, 'held: +20%');
+eq(byId.h.estimated, false, 'held: split exacto');
+
+// Comprar 50 más no es una ganancia de 600. Las 100 que ya tenía subieron 2.
+near(byId.g.priceUsd, 200, 1e-9, 'grew: rindió lo mismo que held');
+near(byId.g.flowUsd, 600, 1e-9, 'grew: 50 unidades nuevas a 12');
+near(byId.g.changeUsd, 800, 1e-9, 'grew: el movimiento total');
+near(byId.g.priceUsd + byId.g.flowUsd, byId.g.changeUsd, 1e-9, 'grew: precio + flujo cierra');
+near(byId.g.pricePct, 20, 1e-9, 'grew: +20%, no +80%');
+
+// Una posición nueva no es la mejor del mes por existir.
+near(byId.n.priceUsd, 0, 1e-9, 'nueva: no rindió nada todavía');
+near(byId.n.flowUsd, 5000, 1e-9, 'nueva: entró plata');
+eq(byId.n.opened, true, 'nueva: marcada');
+eq(byId.n.pricePct, null, 'nueva: sin base contra la cual medir');
+
+// Vendida: la caída es un flujo, no una pérdida.
+near(byId.s.priceUsd, 0, 1e-9, 'vendida: no es pérdida');
+near(byId.s.flowUsd, -500, 1e-9, 'vendida: salió plata');
+eq(byId.s.closed, true, 'vendida: marcada');
+
+// Sin cantidad no hay con qué partir el movimiento: se informa entero como
+// precio y la fila queda marcada.
+near(byId.p.priceUsd, 6000, 1e-9, 'inmueble: movimiento entero como precio');
+eq(byId.p.estimated, true, 'inmueble: split asumido');
+eq(perf.estimatedCount, 1, 'un solo split asumido');
+
+near(perf.totalPriceUsd, 200 + 200 + 6000, 1e-9, 'precio total');
+near(perf.totalFlowUsd, 600 + 5000 - 500, 1e-9, 'flujo total');
+near(perf.totalChangeUsd, perf.totalPriceUsd + perf.totalFlowUsd, 1e-9, 'el total cierra');
+// La base son las posiciones que se tuvieron de punta a punta.
+near(perf.openBaseUsd, 1000 + 1000 + 120000, 1e-9, 'base de apertura');
+near(perf.totalPricePct, (6400 / 122000) * 100, 1e-9, 'rendimiento ponderado');
+
+eq(perf.winners.map(r => r.assetId).join('|'), 'p|h|g', 'ganadores por dólares de precio');
+eq(perf.losers.length, 0, 'sin perdedores');
+eq(perf.empty, false, 'hay historia');
+
+// Sin historia previa el panel no tiene nada que decir, y lo dice.
+const vacia = assetPerformance({ seriesStart: null, open: [], close: [] }, perfAssets);
+eq(vacia.empty, true, 'sin snapshots de apertura: vacío');
+eq(vacia.rows.length, 0, 'sin filas');
+eq(vacia.totalPricePct, null, 'sin rendimiento');
+
+// Una caída real sí es una pérdida.
+const caida = assetPerformance({
+  seriesStart: '2026-08-01',
+  open: [snap('h', 1000, 100)],
+  close: [{ ...snap('h', 700, 100), date: '2026-08-31' }],
+}, perfAssets);
+near(caida.rows[0].priceUsd, -300, 1e-9, 'caída: pérdida de precio');
+near(caida.rows[0].pricePct, -30, 1e-9, 'caída: -30%');
+eq(caida.losers[0].assetId, 'h', 'aparece en perdedores');
+
+// Un activo borrado igual describe un movimiento real.
+const borrado = assetPerformance({
+  seriesStart: '2026-08-01',
+  open: [snap('zz', 900, 10)],
+  close: [],
+}, perfAssets);
+eq(borrado.rows[0].name, 'Posición eliminada', 'se nombra el borrado');
+near(borrado.rows[0].flowUsd, -900, 1e-9, 'y su salida es flujo');
 
 await server.close();
 console.log(fail === 0 ? '\nOK' : `\n${fail} FALLAS`);

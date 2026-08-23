@@ -21,6 +21,8 @@ import type {
   Goal,
   Liability,
   Portfolio,
+  PositionPerformanceData,
+  PositionSnapshot,
   RecurringIncome,
   Snapshot,
   TaxLot,
@@ -37,7 +39,7 @@ export {
   deleteWatchItem,
   refreshWatchlistPrices,
 } from "@/lib/server/extra-actions";
-import { num } from "@/lib/utils";
+import { num, toUsd } from "@/lib/utils";
 
 /** Types that are supposed to get a quote from an upstream feed. */
 const PRICED_TYPES = new Set(["CRYPTO", "STOCK", "BOND", "CEDEAR"]);
@@ -67,6 +69,17 @@ function mapAsset(r: Record<string, unknown>): Asset {
     notes: r.notes == null ? null : String(r.notes),
     priceId: r.price_id == null ? null : String(r.price_id),
     unpriced,
+  };
+}
+
+function mapPositionSnapshot(r: Record<string, unknown>): PositionSnapshot {
+  return {
+    assetId: String(r.asset_id),
+    date: String(r.date).slice(0, 10),
+    valueUsd: num(r.value_usd),
+    quantity: r.quantity == null ? null : num(r.quantity),
+    costBasis: num(r.cost_basis),
+    unpriced: Boolean(r.unpriced),
   };
 }
 
@@ -149,8 +162,7 @@ function mapLiability(r: Record<string, unknown>): Liability {
     notes: r.notes == null ? null : String(r.notes),
     principal: r.principal == null ? null : num(r.principal),
     termPeriods: r.term_periods == null ? null : Number(r.term_periods),
-    startDate:
-      r.start_date == null ? null : String(r.start_date).slice(0, 10),
+    startDate: r.start_date == null ? null : String(r.start_date).slice(0, 10),
     paymentFrequency:
       r.payment_frequency == null ? null : String(r.payment_frequency),
   };
@@ -336,18 +348,21 @@ async function loadPortfolioInner(): Promise<Portfolio> {
 async function writeTodaySnapshot() {
   const sql = await getSql();
   const [assetRows, accRows, liabilityRows, fx] = await Promise.all([
-    sql`select current_value, currency from assets`,
+    // Full rows through mapAsset, not a narrow select: mapAsset is where an
+    // asset with no quote falls back to its cost basis. Reading the raw column
+    // here counted an unpriced holding as zero in the stored snapshot while the
+    // dashboard counted it at cost, so the same book had two net worths
+    // depending on which one you were looking at.
+    sql`select * from assets`,
     sql`select balance, currency from accounts`,
     // Full rows: the net worth now nets a scheduled loan at its outstanding
     // principal, which needs the amortisation columns.
     sql`select * from liabilities`,
     loadFx(),
   ]);
+  const assets = assetRows.map(mapAsset);
   const total = netWorthUsd({
-    assets: assetRows.map((r) => ({
-      currentValue: num(r.current_value),
-      currency: String(r.currency),
-    })),
+    assets,
     accounts: accRows.map((r) => ({
       balance: num(r.balance),
       currency: String(r.currency),
@@ -360,6 +375,57 @@ async function writeTodaySnapshot() {
     `insert into snapshots (date, total_usd) values ($1, $2)
      on conflict (date) do update set total_usd = excluded.total_usd`,
     [today, total],
+  );
+  await writePositionSnapshots(sql, assets, fx.average, today);
+}
+
+/**
+ * One row per position, alongside the net worth total.
+ *
+ * The whole point is that a later report can subtract two dates and say what
+ * each holding did. That only works if the two series are written by the same
+ * pass on the same day — a per-position history a day out of step with the
+ * total would attribute a move to the wrong period. They are also fed by the
+ * same mapped assets, so an unpriced holding carries the same fallback value in
+ * both.
+ *
+ * The FX of the day is stored on the row rather than re-derived at read time:
+ * converting a past peso value at today's dollar is the same mistake the period
+ * report already had to fix in the ledger.
+ */
+async function writePositionSnapshots(
+  sql: Awaited<ReturnType<typeof getSql>>,
+  assets: Asset[],
+  fxAvg: number,
+  date: string,
+) {
+  if (assets.length === 0) return;
+  await sql.query(
+    `insert into position_snapshots
+       (date, asset_id, value, currency, value_usd, fx_used, quantity, cost_basis, unpriced)
+     select $1, v.id, v.value, v.currency, v.usd, $7, v.qty, v.cost, v.unpriced
+       from unnest($2::text[], $3::numeric[], $4::text[], $5::numeric[],
+                   $6::numeric[], $8::numeric[], $9::boolean[])
+         as v(id, value, currency, usd, qty, cost, unpriced)
+     on conflict (date, asset_id) do update set
+       value = excluded.value,
+       currency = excluded.currency,
+       value_usd = excluded.value_usd,
+       fx_used = excluded.fx_used,
+       quantity = excluded.quantity,
+       cost_basis = excluded.cost_basis,
+       unpriced = excluded.unpriced`,
+    [
+      date,
+      assets.map((a) => a.id),
+      assets.map((a) => a.currentValue),
+      assets.map((a) => a.currency),
+      assets.map((a) => toUsd(a.currentValue, a.currency, fxAvg)),
+      assets.map((a) => a.quantity),
+      fxAvg,
+      assets.map((a) => a.costBasis),
+      assets.map((a) => a.unpriced),
+    ],
   );
 }
 
@@ -403,14 +469,83 @@ async function maybeRefreshPricesInBackground(): Promise<void> {
   });
 }
 
+/**
+ * Make sure today has a snapshot, at most once a day.
+ *
+ * The price refresh writes one, but it only runs on its own schedule and can be
+ * turned off entirely — and a book that is never refreshed still has a value
+ * worth recording. One cheap existence check per load, and the write happens on
+ * the first visit of the day and never again.
+ */
+async function ensureTodaySnapshot(): Promise<void> {
+  const sql = await getSql();
+  const today = new Date().toISOString().slice(0, 10);
+  const rows = await sql.query(`select 1 from snapshots where date = $1`, [
+    today,
+  ]);
+  if (rows.length > 0) return;
+  await writeTodaySnapshot();
+}
+
 export const getPortfolio = createServerFn({ method: "GET" })
   .middleware([requireAuth])
   .handler(async () => {
     const portfolio = await loadPortfolioInner();
     // Deliberately not awaited: a slow upstream must not delay the dashboard.
     void maybeRefreshPricesInBackground();
+    void ensureTodaySnapshot().catch((err) => {
+      console.error("[snapshot] no se pudo escribir el del día:", err);
+    });
     return portfolio;
   });
+
+/**
+ * The last recorded value of every position at or before a date.
+ *
+ * Point-in-time rather than a range: a report needs two columns — what each
+ * holding was worth when the period opened and what it is worth now — and
+ * shipping every intermediate day would send positions × days rows to the
+ * browser to compute a subtraction.
+ *
+ * `seriesStart` is the first day the history has anything at all. It is the
+ * honest answer to "why is this panel empty for March": the per-position
+ * history began the day it was switched on and there is nothing before it.
+ */
+export async function loadPositionPerformance(
+  openDate: string,
+  closeDate: string,
+): Promise<PositionPerformanceData> {
+  const sql = await getSql();
+  const asOf = async (date: string) => {
+    const rows = await sql.query(
+      `select distinct on (asset_id)
+         asset_id, date, value_usd, quantity, cost_basis, unpriced
+       from position_snapshots
+       where date <= $1
+       order by asset_id, date desc`,
+      [date],
+    );
+    return rows.map(mapPositionSnapshot);
+  };
+  const [open, close, firstRows] = await Promise.all([
+    asOf(openDate),
+    asOf(closeDate),
+    sql`select min(date) as first from position_snapshots`,
+  ]);
+  const first = firstRows[0]?.first;
+  return {
+    seriesStart: first == null ? null : String(first).slice(0, 10),
+    open,
+    close,
+  };
+}
+
+export const getPositionPerformance = createServerFn({ method: "GET" })
+  .middleware([requireAuth])
+  .validator(z.object({ openDate: isoDate, closeDate: isoDate }))
+  .handler(({ data }) =>
+    loadPositionPerformance(data.openDate, data.closeDate),
+  );
 
 export const getAsset = createServerFn({ method: "GET" })
   .middleware([requireAuth])
@@ -909,7 +1044,13 @@ export async function runPriceRefresh() {
   }
 
   await markPriceRun();
-  if (updated > 0 || fx) await writeTodaySnapshot();
+  // Unconditionally, not only when a quote moved. The daily snapshot records
+  // what the book is worth today, which is just as true on a day the market
+  // did not move or the upstreams were unreachable — and gating it on a
+  // successful fetch meant a week of outages left a week-shaped hole in the
+  // per-position history, with no way to tell it apart from a week of not
+  // holding anything.
+  await writeTodaySnapshot();
   // Counts per source so a silent outage is visible instead of looking like
   // "nothing changed".
   return {

@@ -5,6 +5,8 @@ const {
   positionRows,
   positionStats,
   positionBreakdown,
+  categoryPies,
+  flowProjection,
   formatUnitPrice,
 } = await server.ssrLoadModule('/src/lib/positions.ts');
 const { allocationBuckets } = await server.ssrLoadModule('/src/lib/portfolio-math.ts');
@@ -142,6 +144,92 @@ const { alloc } = allocationBuckets(
 );
 eq(alloc.find((b) => b.key === 'CEDEAR')?.value, 1000, 'CEDEAR tiene bucket propio');
 eq(alloc.find((b) => b.key === 'OTHER')?.value, 500, 'OTHER queda con lo suyo');
+
+/* ------------------------------------------------ renta y retorno total */
+// Un depto que no se movió de precio pero pagó dos años de alquiler no rindió
+// 0%. P&L sigue siendo sólo precio; TOTAL es precio + renta.
+const conRenta = positionRows(
+  [
+    asset({ id: 'p', name: 'Depto', type: 'REAL_ESTATE', costBasis: 100000, currentValue: 100000 }),
+    asset({ id: 'b', ticker: 'ON1', type: 'BOND', quantity: 10000, costBasis: 9000, currentValue: 10000 }),
+  ],
+  fx,
+  {},
+  new Map([
+    ['p', { incomeUsd: 24000, projectedIncomeUsd: 14400 }],
+    ['b', { incomeUsd: 800, projectedIncomeUsd: 900 }],
+  ]),
+);
+const [depto2, on2] = conRenta;
+near(depto2.pnlUsd, 0, 1e-9, 'depto: sin movimiento de precio');
+near(depto2.pnlPct, 0, 1e-9, 'depto: P&L 0%');
+near(depto2.incomeUsd, 24000, 1e-9, 'depto: alquileres cobrados');
+near(depto2.totalUsd, 24000, 1e-9, 'depto: retorno total = renta');
+near(depto2.totalPct, 24, 1e-9, 'depto: +24% aunque el precio no se movió');
+near(depto2.projectedIncomeUsd, 14400, 1e-9, 'depto: alquiler agendado 12M');
+near(on2.pnlUsd, 1000, 1e-9, 'ON: P&L de precio');
+near(on2.totalUsd, 1800, 1e-9, 'ON: precio + cupones');
+near(on2.totalPct, 20, 1e-9, 'ON: +20% total contra +11.1% de precio');
+
+const stRenta = positionStats(conRenta);
+near(stRenta.incomeUsd, 24800, 1e-9, 'stats: renta cobrada');
+near(stRenta.projectedIncomeUsd, 15300, 1e-9, 'stats: renta agendada');
+near(stRenta.totalUsd, 25800, 1e-9, 'stats: retorno total');
+near(stRenta.totalPct, (25800 / 109000) * 100, 1e-9, 'stats: retorno total %');
+// Sin renta cargada, el retorno total es exactamente el P&L de precio.
+const stSinRenta = positionStats(rows);
+near(stSinRenta.totalUsd, stSinRenta.pnlUsd, 1e-9, 'sin renta: total == P&L');
+
+/* ------------------------------------------------------ tortas por clase */
+// El % de una posición es sobre SU clase, no sobre el patrimonio: mezclar los
+// dos denominadores hace leer un 60% del crypto como 60% del libro.
+const pies = categoryPies(rows);
+eq(pies.length, 4, 'una torta por clase');
+eq(pies[0].type, 'REAL_ESTATE', 'la clase más grande primero');
+const cedearPie = pies.find(p => p.type === 'CEDEAR');
+eq(cedearPie.items.length, 2, 'dos ítems en CEDEAR');
+near(cedearPie.items.reduce((s, i) => s + i.pct, 0), 100, 1e-9, 'los % de la clase suman 100');
+near(cedearPie.items[0].pct, (80000 / 80500) * 100, 1e-9, 'BRKB dentro de CEDEAR');
+near(cedearPie.bookPct, (80500 / 212443) * 100, 1e-9, 'y la clase sobre el libro va aparte');
+eq(cedearPie.items[0].label, 'BRKB', 'ítem etiquetado por ticker');
+eq(cedearPie.items[0].unpriced, true, 'el sin precio queda marcado');
+near(pies.reduce((s, p) => s + p.bookPct, 0), 100, 1e-9, 'las clases suman el libro');
+eq(categoryPies([]).length, 0, 'sin posiciones no hay tortas');
+
+/* -------------------------------------------------- flujos proyectados */
+const ml = (k) => k;
+const flows = flowProjection(
+  [
+    { date: '2026-09-10', name: 'Cupón A', amountUsd: 100, assetId: 'a' },
+    { date: '2026-09-25', name: 'Cupón A', amountUsd: 50, assetId: 'a' },
+    { date: '2026-09-15', name: 'Alquiler', amountUsd: 1200, assetId: 'p' },
+    { date: '2027-03-10', name: 'Cupón A', amountUsd: 100, assetId: 'a' },
+    { date: '2026-09-10', name: 'Ajeno', amountUsd: 999, assetId: 'zzz' },
+    { date: '2026-10-01', name: 'Cuota', amountUsd: -400, assetId: 'a' },
+  ],
+  new Set(['a', 'p']),
+  ml,
+  10000,
+);
+eq(flows.months.length, 2, 'sólo los meses que pagan aparecen');
+eq(flows.months[0].key, '2026-09', 'orden cronológico');
+near(flows.months[0].totalUsd, 1350, 1e-9, 'total de septiembre');
+// Dos cupones del mismo bono en un mes son una línea, no dos.
+eq(flows.months[0].items.length, 2, 'un renglón por activo que paga');
+near(flows.months[0].items.find(i => i.assetId === 'a').amountUsd, 150, 1e-9, 'los dos cupones se suman');
+eq(flows.months[0].items[0].name, 'Alquiler', 'el que más paga primero');
+near(flows.totalUsd, 1450, 1e-9, 'total de la ventana, sin lo ajeno ni lo negativo');
+eq(flows.eventCount, 4, 'eventos contados');
+// Un libro de ONs semestrales paga en dos meses de doce: dividir por doce
+// describe un ingreso mensual que nunca llega.
+eq(flows.payingMonths, 2, 'meses que pagan');
+near(flows.avgPerPayingMonth, 725, 1e-9, 'promedio sobre los meses que pagan');
+eq(flows.peak.key, '2026-09', 'mes pico');
+near(flows.yieldPct, 14.5, 1e-9, 'yield sobre el valor de las posiciones');
+const sinFlujos = flowProjection([], new Set(['a']), ml, 100);
+eq(sinFlujos.eventCount, 0, 'sin eventos');
+near(sinFlujos.avgPerPayingMonth, 0, 1e-9, 'sin eventos no divide por cero');
+eq(sinFlujos.peak, null, 'sin pico');
 
 await server.close();
 console.log(fail === 0 ? '\nOK' : `\n${fail} FALLAS`);

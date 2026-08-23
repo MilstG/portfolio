@@ -73,6 +73,34 @@ export type Snapshot = {
   totalUsd: number;
 };
 
+/**
+ * What one position was worth on one day.
+ *
+ * Written by the same pass that writes the net worth snapshot, so the two
+ * series never disagree about a date. Only exists from the day per-position
+ * history was switched on — there is no record of what anything was worth
+ * before that, and none is invented.
+ */
+export type PositionSnapshot = {
+  assetId: string;
+  date: string;
+  valueUsd: number;
+  /** Null when the position carries no usable quantity. */
+  quantity: number | null;
+  costBasis: number;
+  /** The value is the cost basis standing in for a quote that never arrived. */
+  unpriced: boolean;
+};
+
+export type PositionPerformanceData = {
+  /** First day the per-position history has any row, or null when empty. */
+  seriesStart: string | null;
+  /** Latest row per asset at or before the period's opening date. */
+  open: PositionSnapshot[];
+  /** Latest row per asset at or before the period's closing date. */
+  close: PositionSnapshot[];
+};
+
 export type Liability = {
   id: string;
   name: string;
