@@ -42,9 +42,13 @@ export const Route = createFileRoute("/settings")({
   component: SettingsPage,
 });
 
+// Mirrors the allocation buckets in lib/portfolio-math.ts, CASH included: a
+// target you cannot set is a target the ALLOC vs TARGET panel will report a gap
+// against forever.
 const ASSET_TYPES = [
   "CRYPTO",
   "STOCK",
+  "CEDEAR",
   "BOND",
   "REAL_ESTATE",
   "CASH",

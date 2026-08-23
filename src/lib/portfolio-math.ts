@@ -200,9 +200,14 @@ export function allocationBuckets(
     (s, a) => s + toUsd(a.balance, a.currency, fxAvg),
     0,
   );
+  // CEDEAR has its own bucket: it used to fall through to OTHER, which made a
+  // real equity position show up on the donut as unclassified — and, now that
+  // the slice links to its own tab, would have sent a click to a view that did
+  // not contain what the slice was measuring.
   const buckets = [
     { key: "CRYPTO", name: "CRYPTO", value: 0 },
     { key: "STOCK", name: "EQTY", value: 0 },
+    { key: "CEDEAR", name: "CEDEAR", value: 0 },
     { key: "BOND", name: "FI", value: 0 },
     { key: "REAL_ESTATE", name: "RE", value: 0 },
     { key: "CASH", name: "CASH", value: cashUsd },

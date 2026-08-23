@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMemo } from "react";
 import {
   Area,
@@ -22,6 +22,7 @@ import { Tip } from "@/components/ui/tip";
 import { Pager, usePager } from "@/components/ui/pager";
 import { RangeSelect, useRange } from "@/components/ui/range";
 import { AssetLink, TipRow } from "@/components/ui/asset-link";
+import { TypeLink } from "@/components/ui/type-link";
 import { SortHeader, useSort } from "@/components/ui/sort";
 import { getPortfolio } from "@/lib/server/portfolio";
 import { computeAnalytics } from "@/lib/analytics";
@@ -35,7 +36,13 @@ import {
   INCOME_KINDS,
   type IncomeKind,
 } from "@/lib/portfolio-math";
-import { formatUsd, formatPct, monthLabel, toUsd } from "@/lib/utils";
+import {
+  ASSET_TYPES,
+  formatUsd,
+  formatPct,
+  monthLabel,
+  toUsd,
+} from "@/lib/utils";
 
 export const Route = createFileRoute("/")({
   loader: () => getPortfolio(),
@@ -123,6 +130,23 @@ function CalendarTip({
 
 function Dashboard() {
   const data = Route.useLoaderData();
+  const navigate = useNavigate();
+  /**
+   * Open the positions behind an allocation bucket.
+   *
+   * Cash is in the donut but is not a position, so it goes to the accounts
+   * page; an unknown key does nothing rather than landing on an empty filter.
+   */
+  const openBucket = (key: string | undefined) => {
+    if (!key) return;
+    if (key === "CASH") {
+      navigate({ to: "/cash" });
+      return;
+    }
+    if (ASSET_TYPES.some((t) => t.value === key)) {
+      navigate({ to: "/assets", search: { type: key } });
+    }
+  };
   // Both passes walk every asset/tx several times — compute once per payload.
   const s = useMemo(() => computeDashboard(data), [data]);
   const a = useMemo(() => computeAnalytics(data), [data]);
@@ -223,7 +247,11 @@ function Dashboard() {
       const r = returnById.get(id);
       const bond = bondById.get(id);
       const next = nextByAsset.get(id);
-      const valueUsd = toUsd(asset.currentValue, asset.currency, data.fx.average);
+      const valueUsd = toUsd(
+        asset.currentValue,
+        asset.currency,
+        data.fx.average,
+      );
       const costUsd = toUsd(asset.costBasis, asset.currency, data.fx.average);
       const pnl = valueUsd - costUsd;
 
@@ -311,7 +339,14 @@ function Dashboard() {
         </div>
       );
     };
-  }, [data.assets, data.transactions, data.fx.average, s.holdings, ret.perAsset, bonds]);
+  }, [
+    data.assets,
+    data.transactions,
+    data.fx.average,
+    s.holdings,
+    ret.perAsset,
+    bonds,
+  ]);
 
   const calendarKinds = useMemo(
     () => INCOME_KINDS.filter((k) => a.calendarStacked.some((r) => r[k] > 0)),
@@ -587,6 +622,11 @@ function Dashboard() {
                         stroke="#0a0a0a"
                         strokeWidth={2}
                         isAnimationActive={false}
+                        className="cursor-pointer"
+                        // Same destination as the legend row beside it, so the
+                        // donut is not the one part of the panel that does
+                        // nothing when clicked.
+                        onClick={(_, index) => openBucket(s.alloc[index]?.key)}
                       >
                         {s.alloc.map((_, i) => (
                           <Cell key={i} fill={COLORS[i % COLORS.length]} />
@@ -620,14 +660,38 @@ function Dashboard() {
                       <div
                         key={row.key}
                         className="flex items-center gap-2 font-mono text-[12px]"
-                        title={`${row.name}: ${formatUsd(row.value)} · ${pct.toFixed(2)}% del patrimonio`}
                       >
                         <span
                           className="h-2.5 w-2.5 shrink-0"
                           style={{ background: COLORS[i % COLORS.length] }}
                         />
-                        <span className="w-12 shrink-0 text-muted">
-                          {row.name}
+                        <span className="w-12 shrink-0">
+                          <TypeLink
+                            type={row.key}
+                            label={row.name}
+                            className="text-muted"
+                            tip={
+                              <div className="space-y-0.5">
+                                <p className="mb-1 border-b border-line pb-1 text-accent">
+                                  {row.name}
+                                </p>
+                                <TipRow
+                                  label="valor"
+                                  value={formatUsd(row.value)}
+                                />
+                                <TipRow
+                                  label="del patrimonio"
+                                  value={`${pct.toFixed(2)}%`}
+                                  tone="muted"
+                                />
+                                <p className="mt-1 border-t border-line pt-1 text-subtle">
+                                  {row.key === "CASH"
+                                    ? "Abrir cuentas"
+                                    : "Abrir las posiciones de esta clase"}
+                                </p>
+                              </div>
+                            }
+                          />
                         </span>
                         <div className="h-1.5 min-w-0 flex-1 bg-line">
                           <div
@@ -1000,8 +1064,30 @@ function Dashboard() {
                     key={t.type}
                     className="flex items-center gap-2 font-mono text-[12px]"
                   >
-                    <span className="w-16 text-muted">
-                      {t.type.slice(0, 8)}
+                    <span className="w-16 shrink-0">
+                      <TypeLink
+                        type={t.type}
+                        label={t.type.slice(0, 8)}
+                        className="text-muted"
+                        tip={
+                          <div className="space-y-0.5">
+                            <p className="mb-1 border-b border-line pb-1 text-accent">
+                              {t.type}
+                            </p>
+                            <TipRow label="valor" value={formatUsd(t.value)} />
+                            <TipRow
+                              label="costo"
+                              value={formatUsd(t.cost)}
+                              tone="muted"
+                            />
+                            <TipRow
+                              label="P&L"
+                              value={`${formatUsd(t.pnl)} · ${formatPct(t.pnlPct)}`}
+                              tone={t.pnl >= 0 ? "gain" : "loss"}
+                            />
+                          </div>
+                        }
+                      />
                     </span>
                     <div className="h-2 flex-1 bg-line">
                       <div
@@ -1429,10 +1515,34 @@ function Dashboard() {
                     <div
                       key={r.type}
                       className="flex items-center gap-2 font-mono text-[12px]"
-                      title={`${r.type}: actual ${r.actualPct.toFixed(1)}% · target ${r.targetPct.toFixed(1)}% · ${formatUsd(r.actualUsd)}`}
                     >
-                      <span className="w-16 shrink-0 truncate text-muted">
-                        {r.type.slice(0, 8)}
+                      <span className="w-16 shrink-0">
+                        <TypeLink
+                          type={r.type}
+                          label={r.type.slice(0, 8)}
+                          className="text-muted"
+                          tip={
+                            <div className="space-y-0.5">
+                              <p className="mb-1 border-b border-line pb-1 text-accent">
+                                {r.type}
+                              </p>
+                              <TipRow
+                                label="actual"
+                                value={`${r.actualPct.toFixed(1)}% · ${formatUsd(r.actualUsd)}`}
+                              />
+                              <TipRow
+                                label="target"
+                                value={`${r.targetPct.toFixed(1)}%`}
+                                tone="muted"
+                              />
+                              <TipRow
+                                label="gap"
+                                value={`${r.gap >= 0 ? "+" : ""}${r.gap.toFixed(1)} pp`}
+                                tone={Math.abs(r.gap) >= 5 ? "loss" : "muted"}
+                              />
+                            </div>
+                          }
+                        />
                       </span>
                       <div className="relative h-2 flex-1 bg-line">
                         <div
@@ -1566,7 +1676,9 @@ function Dashboard() {
             <Monitor
               title="DRAWDOWN"
               action={
-                <HelpTip content={`Peak ${formatUsd(a.drawdown.peak)} · trough ${formatUsd(a.drawdown.trough)} · max DD ${a.drawdown.drawdownPct.toFixed(1)}%`} />
+                <HelpTip
+                  content={`Peak ${formatUsd(a.drawdown.peak)} · trough ${formatUsd(a.drawdown.trough)} · max DD ${a.drawdown.drawdownPct.toFixed(1)}%`}
+                />
               }
             >
               <div className="flex h-36 flex-col">
@@ -1685,8 +1797,12 @@ function Dashboard() {
                     key={c.type}
                     className="flex items-center gap-2 font-mono text-[12px]"
                   >
-                    <span className="w-20 shrink-0 truncate text-muted">
-                      {c.type}
+                    <span className="w-20 shrink-0">
+                      <TypeLink
+                        type={c.type}
+                        className="text-muted"
+                        tip={`${c.count} ${c.count === 1 ? "posición" : "posiciones"} en ${c.type}`}
+                      />
                     </span>
                     <div className="h-2 flex-1 bg-line">
                       <div
@@ -1713,7 +1829,9 @@ function Dashboard() {
             <Monitor
               title="FX STRESS"
               action={
-                <HelpTip content={`NW base ${formatUsd(a.fxScenario.base)}. Escenarios revalúan solo balances ARS ±% sobre el FX promedio.`} />
+                <HelpTip
+                  content={`NW base ${formatUsd(a.fxScenario.base)}. Escenarios revalúan solo balances ARS ±% sobre el FX promedio.`}
+                />
               }
             >
               <div className="h-40">
@@ -1772,7 +1890,7 @@ function Dashboard() {
                       key={r.type}
                       className="flex items-center justify-between gap-2 border-b border-line/40 py-0.5 font-mono text-[12px]"
                     >
-                      <span className="truncate text-fg">{r.type}</span>
+                      <TypeLink type={r.type} className="text-fg" />
                       <span
                         className={`shrink-0 ${r.action === "REDUCIR" ? "text-loss" : "text-gain"}`}
                       >
@@ -2017,9 +2135,9 @@ function Dashboard() {
             >
               {bench === null ? (
                 <p className="font-mono text-xs text-muted">
-                  faltan datos para comparar: hacen falta al menos dos
-                  snapshots posteriores al primer registro de FX. El historial
-                  de FX suma una fila cada vez que actualizás el dólar en CFG.
+                  faltan datos para comparar: hacen falta al menos dos snapshots
+                  posteriores al primer registro de FX. El historial de FX suma
+                  una fila cada vez que actualizás el dólar en CFG.
                 </p>
               ) : (
                 <div className="flex h-40 flex-col">
