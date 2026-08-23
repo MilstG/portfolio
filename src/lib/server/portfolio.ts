@@ -455,17 +455,56 @@ const money = z.number().finite();
  * response still serves the prices it already had; the next one sees fresh
  * ones.
  */
+function isStale(last: string | null, minutes: number, now: number): boolean {
+  if (!last) return true;
+  const age = now - Date.parse(last);
+  return !Number.isFinite(age) || age >= minutes * 60_000;
+}
+
+/**
+ * Which pass, if any, is due.
+ *
+ * Pure and exported so the throttle can be tested without a clock or a network:
+ * this is the thing standing between one CoinGecko call a minute and one on
+ * every page load, and it is not the kind of decision to leave unexercised.
+ *
+ * The full pass wins when both are due — it covers crypto anyway, and firing
+ * both in one tick would ask the same upstream the same question twice.
+ */
+export function dueRefresh(input: {
+  lastFull: string | null;
+  lastCrypto: string | null;
+  fullMinutes: number;
+  cryptoMinutes: number;
+  now: number;
+}): RefreshScope | "none" {
+  const { lastFull, lastCrypto, fullMinutes, cryptoMinutes, now } = input;
+  if (fullMinutes > 0 && isStale(lastFull, fullMinutes, now)) return "all";
+  if (cryptoMinutes > 0 && isStale(lastCrypto, cryptoMinutes, now))
+    return "crypto";
+  return "none";
+}
+
 async function maybeRefreshPricesInBackground(): Promise<void> {
-  const minutes = refreshIntervalMinutes();
-  if (minutes === 0) return;
-  const last = await lastPriceAttempt();
-  if (last) {
-    const age = Date.now() - Date.parse(last);
-    if (Number.isFinite(age) && age < minutes * 60_000) return;
-  }
-  await markPriceRun();
-  void runPriceRefresh().catch((err) => {
-    console.error("[prices] refresh automático falló:", err);
+  const [lastFull, lastCrypto] = await Promise.all([
+    lastPriceAttempt(),
+    lastCryptoAttempt(),
+  ]);
+  const scope = dueRefresh({
+    lastFull,
+    lastCrypto,
+    fullMinutes: refreshIntervalMinutes(),
+    cryptoMinutes: cryptoIntervalMinutes(),
+    now: Date.now(),
+  });
+  if (scope === "none") return;
+
+  // Marked before the work starts, so several tabs loading at once queue one
+  // refresh rather than a stampede of outbound calls.
+  if (scope === "all") await markPriceRun();
+  await markCryptoRun();
+  void runPriceRefresh(scope).catch((err) => {
+    console.error(`[prices] refresh ${scope} falló:`, err);
   });
 }
 
@@ -845,11 +884,28 @@ export const updateFx = createServerFn({ method: "POST" })
  */
 const PRICE_RUN_KEY = "last_price_run";
 const PRICE_OK_KEY = "last_price_success";
+/** Separate throttle for the crypto-only pass; see cryptoIntervalMinutes. */
+const CRYPTO_RUN_KEY = "last_crypto_run";
 
-/** Minutes between automatic refreshes. 0 disables it. */
+/** Minutes between full automatic refreshes. 0 disables it. */
 function refreshIntervalMinutes(): number {
   const raw = Number(process.env.PRICE_REFRESH_MINUTES ?? 60);
   return Number.isFinite(raw) && raw >= 0 ? raw : 60;
+}
+
+/**
+ * Minutes between crypto-only refreshes. 0 disables it.
+ *
+ * Crypto trades around the clock and moves while every other market on this
+ * book is closed, so it is worth asking about far more often than the rest.
+ * The rest is deliberately NOT dragged along: the equity, bond and FX feeds are
+ * free endpoints that would be hit sixty times an hour for quotes that change
+ * on a slower clock, which is how an IP earns a rate limit and the whole board
+ * goes blank.
+ */
+function cryptoIntervalMinutes(): number {
+  const raw = Number(process.env.CRYPTO_REFRESH_MINUTES ?? 1);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 1;
 }
 
 async function markMeta(key: string): Promise<void> {
@@ -867,6 +923,7 @@ async function markMeta(key: string): Promise<void> {
 }
 
 const markPriceRun = () => markMeta(PRICE_RUN_KEY);
+const markCryptoRun = () => markMeta(CRYPTO_RUN_KEY);
 const markPriceSuccess = () => markMeta(PRICE_OK_KEY);
 
 async function readMeta(key: string): Promise<string | null> {
@@ -884,6 +941,8 @@ async function readMeta(key: string): Promise<string | null> {
 
 /** Last attempt — throttles the automatic trigger. */
 export const lastPriceAttempt = () => readMeta(PRICE_RUN_KEY);
+/** Last crypto-only attempt. */
+export const lastCryptoAttempt = () => readMeta(CRYPTO_RUN_KEY);
 /** Last run that actually brought data back — what the footer shows. */
 export const lastPriceRun = () => readMeta(PRICE_OK_KEY);
 
@@ -907,7 +966,17 @@ async function currentMep(sql: Awaited<ReturnType<typeof getSql>>) {
   }
 }
 
-export async function runPriceRefresh() {
+/**
+ * Which feeds a pass asks.
+ *
+ * "crypto" exists so the minute-by-minute pass can leave the equity, bond and
+ * FX endpoints alone — they are free services quoting markets that are shut
+ * most of the day, and hammering them buys a rate limit, not fresher numbers.
+ */
+export type RefreshScope = "all" | "crypto";
+
+export async function runPriceRefresh(scope: RefreshScope = "all") {
+  const cryptoOnly = scope === "crypto";
   const sql = await getSql();
   const assets =
     await sql`select id, name, ticker, type, quantity, current_value, price_id from assets`;
@@ -935,15 +1004,17 @@ export async function runPriceRefresh() {
   const cedearLookup = [...new Set([...cedearTickers, ...stockTickers])];
 
   // FX first: CEDEARs quote in pesos, so their USD price depends on MEP.
-  const fx = await fetchDolarRates();
+  const fx = cryptoOnly ? null : await fetchDolarRates();
   const mepRate = fx?.mep ?? (await currentMep(sql));
 
-  const [crypto, stocks, bondFactors, cedears] = await Promise.all([
-    fetchCryptoUsd(cryptoTickers),
-    fetchStockUsd(stockTickers),
-    fetchArgBondFactors(bondTickers),
-    fetchCedearUsd(cedearLookup, mepRate),
-  ]);
+  const [crypto, stocks, bondFactors, cedears] = cryptoOnly
+    ? [await fetchCryptoUsd(cryptoTickers), {}, {}, {}]
+    : await Promise.all([
+        fetchCryptoUsd(cryptoTickers),
+        fetchStockUsd(stockTickers),
+        fetchArgBondFactors(bondTickers),
+        fetchCedearUsd(cedearLookup, mepRate),
+      ]);
 
   const ids: string[] = [];
   const values: number[] = [];
@@ -952,11 +1023,15 @@ export async function runPriceRefresh() {
 
   for (const a of assets) {
     const type = String(a.type);
-    const tracked =
-      type === "CRYPTO" ||
-      type === "STOCK" ||
-      type === "BOND" ||
-      type === "CEDEAR";
+    const tracked = cryptoOnly
+      ? type === "CRYPTO"
+      : type === "CRYPTO" ||
+        type === "STOCK" ||
+        type === "BOND" ||
+        type === "CEDEAR";
+    // On a crypto pass the other classes are not "unpriced", they are simply
+    // not being asked about — listing them would turn the SIN PRECIO banner on
+    // every minute for holdings that are perfectly fine.
     if (!tracked) continue;
 
     const key = priceKey(a);
@@ -1044,6 +1119,11 @@ export async function runPriceRefresh() {
   }
 
   await markPriceRun();
+  // The footer reads this one, and nothing ever wrote it: every successful
+  // refresh still left the status bar saying SIN PRECIOS. Only a pass that
+  // actually brought something back counts — marking it on every attempt would
+  // make an outage look like fresh data.
+  if (updated > 0 || fx) await markPriceSuccess();
   // Unconditionally, not only when a quote moved. The daily snapshot records
   // what the book is worth today, which is just as true on a day the market
   // did not move or the upstreams were unreachable — and gating it on a

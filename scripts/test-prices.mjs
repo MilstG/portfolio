@@ -24,10 +24,14 @@ const check = (ok, label, detail = "") => {
   if (!ok) fail++;
 };
 
+/** Every URL the stub was asked for, so a pass can be checked for restraint. */
+const called = [];
+
 /** Routes stubbed responses by URL so each upstream can be exercised alone. */
 function installFetchStub(handlers) {
   globalThis.fetch = async (url) => {
     const href = String(url);
+    called.push(href);
     for (const [pattern, body] of handlers) {
       if (href.includes(pattern)) {
         return {
@@ -49,7 +53,7 @@ const server = await createServer({
 
 try {
   const { getSql } = await server.ssrLoadModule("/src/lib/db.ts");
-  const { runPriceRefresh } = await server.ssrLoadModule(
+  const { runPriceRefresh, dueRefresh } = await server.ssrLoadModule(
     "/src/lib/server/portfolio.ts",
   );
   const sql = await getSql();
@@ -148,6 +152,108 @@ try {
     r2.unpriced.some((u) => u.includes("Graphite")),
     "un token no cotizable se reporta por nombre",
     `-> ${JSON.stringify(r2.unpriced)}`,
+  );
+
+  /* ------------------------------------------------------ pasada de crypto */
+  // La pasada de cada minuto sólo puede tocar crypto: pegarle a Yahoo, data912
+  // y dolarapi sesenta veces por hora no trae precios más frescos, trae un
+  // rate limit y el tablero en blanco.
+  await sql.query(`delete from assets`);
+  await sql.query(
+    `insert into assets (id, name, ticker, type, quantity, cost_basis, current_value, currency)
+     values
+       ('c-btc','Bitcoin','BTC','CRYPTO',2,50000,0,'USD'),
+       ('c-aapl','Apple','AAPL','STOCK',10,1500,1500,'USD'),
+       ('c-on','ON CICAO','CICAO','BOND',10000,9000,9000,'USD')`,
+  );
+  installFetchStub([
+    ["simple/price", { bitcoin: { usd: 70000 } }],
+    ["finance/chart/AAPL", { chart: { result: [{ meta: { regularMarketPrice: 999 } }] } }],
+    ["arg_corps", [{ symbol: "CICAO", c: 200 }]],
+    ["arg_bonds", []],
+    ["dolarapi.com", [{ casa: "oficial", venta: 1 }, { casa: "blue", venta: 2 }, { casa: "bolsa", venta: 3 }]],
+  ]);
+  const fxBefore = await sql.query(`select blue from fx_rates where id = 1`);
+  called.length = 0;
+  const rc = await runPriceRefresh("crypto");
+  const hit = (p) => called.some((u) => u.includes(p));
+  check(hit("simple/price"), "la pasada de crypto consulta CoinGecko");
+  check(!hit("finance/chart"), "y no toca Yahoo");
+  check(!hit("data912"), "ni data912");
+  check(!hit("dolarapi"), "ni dolarapi");
+
+  const after = await sql.query(`select id, current_value from assets order by id`);
+  const val = (id) => Number(after.find((r) => r.id === id)?.current_value ?? 0);
+  check(near(val("c-btc"), 140000), "BTC se actualiza", `-> ${val("c-btc")}`);
+  check(near(val("c-aapl"), 1500), "AAPL queda como estaba", `-> ${val("c-aapl")}`);
+  check(near(val("c-on"), 9000), "el bono queda como estaba", `-> ${val("c-on")}`);
+  // No preguntar por algo no es lo mismo que no poder cotizarlo: listarlos
+  // prendería el cartel SIN PRECIO cada minuto sobre tenencias que están bien.
+  check(
+    rc.unpriced.length === 0,
+    "no reporta como sin precio lo que no preguntó",
+    `-> ${JSON.stringify(rc.unpriced)}`,
+  );
+  check(rc.fx === false, "no toca el FX");
+  const fxAfter = await sql.query(`select blue from fx_rates where id = 1`);
+  check(
+    Number(fxBefore[0].blue) === Number(fxAfter[0].blue),
+    "el dólar guardado no se mueve",
+    `-> ${fxAfter[0].blue}`,
+  );
+
+  /* ------------------------------------------------------------- throttle */
+  // Lo único entre "una llamada a CoinGecko por minuto" y "una por cada carga
+  // de página".
+  const NOW = Date.parse("2026-08-23T12:00:00Z");
+  const hace = (min) => new Date(NOW - min * 60_000).toISOString();
+  const due = (o) =>
+    dueRefresh({ fullMinutes: 60, cryptoMinutes: 1, now: NOW, ...o });
+
+  check(
+    due({ lastFull: null, lastCrypto: null }) === "all",
+    "sin corridas previas arranca con la pasada completa",
+  );
+  check(
+    due({ lastFull: hace(2), lastCrypto: hace(2) }) === "crypto",
+    "a los 2 minutos toca crypto y no la completa",
+  );
+  check(
+    due({ lastFull: hace(2), lastCrypto: hace(0.5) }) === "none",
+    "a los 30 segundos no toca nada",
+  );
+  check(
+    due({ lastFull: hace(2), lastCrypto: hace(1) }) === "crypto",
+    "al minuto justo sí",
+  );
+  // Cuando las dos vencen gana la completa: ya incluye crypto, y disparar las
+  // dos en el mismo tick le pregunta lo mismo dos veces al mismo upstream.
+  check(
+    due({ lastFull: hace(90), lastCrypto: hace(90) }) === "all",
+    "si vencen las dos gana la completa",
+  );
+  check(
+    due({ lastFull: hace(2), lastCrypto: hace(90), cryptoMinutes: 0 }) === "none",
+    "CRYPTO_REFRESH_MINUTES=0 apaga la pasada de crypto",
+  );
+  check(
+    due({ lastFull: hace(999), lastCrypto: hace(999), fullMinutes: 0 }) === "crypto",
+    "PRICE_REFRESH_MINUTES=0 apaga la completa pero no la de crypto",
+  );
+  check(
+    due({ lastFull: "no es una fecha", lastCrypto: hace(0.1) }) === "all",
+    "una marca corrupta se trata como vencida, no como recién corrida",
+  );
+
+  // El footer lee last_price_success y nadie lo escribía: cada refresh exitoso
+  // seguía mostrando SIN PRECIOS.
+  const okRow = await sql.query(
+    `select value from app_meta where key = 'last_price_success'`,
+  );
+  check(
+    okRow.length === 1 && !Number.isNaN(Date.parse(okRow[0].value)),
+    "un refresh con datos marca last_price_success",
+    `-> ${okRow[0]?.value ?? "sin fila"}`,
   );
 } catch (err) {
   console.error("[test] error:", err);

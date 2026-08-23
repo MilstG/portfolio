@@ -1,4 +1,4 @@
-import { Link, useRouterState } from "@tanstack/react-router";
+import { Link, useRouter, useRouterState } from "@tanstack/react-router";
 import {
   ArrowLeftRight,
   Briefcase,
@@ -89,6 +89,56 @@ function PriceStatus({ lastPriceRun }: { lastPriceRun: string | null }) {
   );
 }
 
+/**
+ * Re-fetch on a timer so an open tab keeps up with the market.
+ *
+ * The refresh itself is triggered server-side from the portfolio loader, which
+ * only runs on navigation — without this, "crypto refreshes every minute" was
+ * true only for someone who kept reloading the page. Each tick re-runs the
+ * loaders, which is what gives the server the chance to fire its throttled
+ * background pass; the tick after that shows the result, so a quote on screen
+ * is at most one interval old.
+ *
+ * Paused while the tab is hidden and refreshed the moment it comes back: a
+ * dashboard nobody is looking at should not be spending API calls, and coming
+ * back to a stale screen and waiting a minute for it to catch up is worse than
+ * not having the timer at all.
+ */
+function useLiveRefresh(seconds = 60) {
+  const router = useRouter();
+  useEffect(() => {
+    if (seconds <= 0) return;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const tick = () => {
+      if (document.visibilityState !== "visible") return;
+      void router.invalidate();
+    };
+    const start = () => {
+      if (timer) return;
+      timer = setInterval(tick, seconds * 1000);
+    };
+    const stop = () => {
+      if (!timer) return;
+      clearInterval(timer);
+      timer = null;
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        tick();
+        start();
+      } else {
+        stop();
+      }
+    };
+    if (document.visibilityState === "visible") start();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      stop();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [router, seconds]);
+}
+
 export function Shell({
   children,
   pinEnabled,
@@ -100,6 +150,7 @@ export function Shell({
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const clock = useClock();
+  useLiveRefresh();
   const hints = useHints();
   const isActive = (to: string) =>
     to === "/" ? pathname === "/" : pathname.startsWith(to);
