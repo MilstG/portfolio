@@ -14,6 +14,7 @@ import { Route as AssetsRouteImport } from './routes/assets'
 import { Route as CashRouteImport } from './routes/cash'
 import { Route as CashflowRouteImport } from './routes/cashflow'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as ReportesRouteImport } from './routes/reportes'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as AssetsIdRouteImport } from './routes/assets_.$id'
 
@@ -42,6 +43,11 @@ const LoginRoute = LoginRouteImport.update({
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ReportesRoute = ReportesRouteImport.update({
+  id: '/reportes',
+  path: '/reportes',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -59,6 +65,7 @@ export interface FileRoutesByFullPath {
   '/cash': typeof CashRoute
   '/cashflow': typeof CashflowRoute
   '/login': typeof LoginRoute
+  '/reportes': typeof ReportesRoute
   '/settings': typeof SettingsRoute
   '/assets/$id': typeof AssetsIdRoute
 }
@@ -68,6 +75,7 @@ export interface FileRoutesByTo {
   '/cash': typeof CashRoute
   '/cashflow': typeof CashflowRoute
   '/login': typeof LoginRoute
+  '/reportes': typeof ReportesRoute
   '/settings': typeof SettingsRoute
   '/assets/$id': typeof AssetsIdRoute
 }
@@ -78,6 +86,7 @@ export interface FileRoutesById {
   '/cash': typeof CashRoute
   '/cashflow': typeof CashflowRoute
   '/login': typeof LoginRoute
+  '/reportes': typeof ReportesRoute
   '/settings': typeof SettingsRoute
   '/assets_/$id': typeof AssetsIdRoute
 }
@@ -89,6 +98,7 @@ export interface FileRouteTypes {
     | '/cash'
     | '/cashflow'
     | '/login'
+    | '/reportes'
     | '/settings'
     | '/assets/$id'
   fileRoutesByTo: FileRoutesByTo
@@ -98,6 +108,7 @@ export interface FileRouteTypes {
     | '/cash'
     | '/cashflow'
     | '/login'
+    | '/reportes'
     | '/settings'
     | '/assets/$id'
   id:
@@ -107,6 +118,7 @@ export interface FileRouteTypes {
     | '/cash'
     | '/cashflow'
     | '/login'
+    | '/reportes'
     | '/settings'
     | '/assets_/$id'
   fileRoutesById: FileRoutesById
@@ -117,6 +129,7 @@ export interface RootRouteChildren {
   CashRoute: typeof CashRoute
   CashflowRoute: typeof CashflowRoute
   LoginRoute: typeof LoginRoute
+  ReportesRoute: typeof ReportesRoute
   SettingsRoute: typeof SettingsRoute
   AssetsIdRoute: typeof AssetsIdRoute
 }
@@ -158,6 +171,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/reportes': {
+      id: '/reportes'
+      path: '/reportes'
+      fullPath: '/reportes'
+      preLoaderRoute: typeof ReportesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings': {
       id: '/settings'
       path: '/settings'
@@ -181,6 +201,7 @@ const rootRouteChildren: RootRouteChildren = {
   CashRoute: CashRoute,
   CashflowRoute: CashflowRoute,
   LoginRoute: LoginRoute,
+  ReportesRoute: ReportesRoute,
   SettingsRoute: SettingsRoute,
   AssetsIdRoute: AssetsIdRoute,
 }

@@ -3,6 +3,7 @@ import {
   ArrowLeftRight,
   Briefcase,
   Camera,
+  FileBarChart,
   HelpCircle,
   LayoutDashboard,
   LockKeyhole,
@@ -47,11 +48,76 @@ export function CommandPalette({ pinEnabled }: { pinEnabled: boolean }) {
   const commands = useMemo<Command[]>(() => {
     const go = (to: string) => () => router.navigate({ to });
     const list: Command[] = [
-      { id: "nav-/", label: "MONIT", group: "IR A", hint: "F1", icon: LayoutDashboard, run: go("/") },
-      { id: "nav-/assets", label: "POS", group: "IR A", hint: "F2", icon: Briefcase, run: go("/assets") },
-      { id: "nav-/cash", label: "CASH", group: "IR A", hint: "F3", icon: Wallet, run: go("/cash") },
-      { id: "nav-/cashflow", label: "FLUJO", group: "IR A", hint: "F4", icon: ArrowLeftRight, run: go("/cashflow") },
-      { id: "nav-/settings", label: "CFG", group: "IR A", hint: "F5", icon: Settings, run: go("/settings") },
+      {
+        id: "nav-/",
+        label: "MONIT",
+        group: "IR A",
+        hint: "F1",
+        icon: LayoutDashboard,
+        run: go("/"),
+      },
+      {
+        id: "nav-/assets",
+        label: "POS",
+        group: "IR A",
+        hint: "F2",
+        icon: Briefcase,
+        run: go("/assets"),
+      },
+      {
+        id: "nav-/cash",
+        label: "CASH",
+        group: "IR A",
+        hint: "F3",
+        icon: Wallet,
+        run: go("/cash"),
+      },
+      {
+        id: "nav-/cashflow",
+        label: "FLUJO",
+        group: "IR A",
+        hint: "F4",
+        icon: ArrowLeftRight,
+        run: go("/cashflow"),
+      },
+      {
+        id: "nav-/reportes",
+        label: "REPORTES",
+        group: "IR A",
+        hint: "F5",
+        icon: FileBarChart,
+        run: go("/reportes"),
+      },
+      {
+        id: "nav-/reportes-w",
+        label: "REPORTE SEMANAL",
+        group: "IR A",
+        icon: FileBarChart,
+        run: () => router.navigate({ to: "/reportes", search: { p: "WEEK" } }),
+      },
+      {
+        id: "nav-/reportes-m",
+        label: "REPORTE MENSUAL",
+        group: "IR A",
+        icon: FileBarChart,
+        run: () => router.navigate({ to: "/reportes", search: { p: "MONTH" } }),
+      },
+      {
+        id: "nav-/reportes-q",
+        label: "REPORTE TRIMESTRAL",
+        group: "IR A",
+        icon: FileBarChart,
+        run: () =>
+          router.navigate({ to: "/reportes", search: { p: "QUARTER" } }),
+      },
+      {
+        id: "nav-/settings",
+        label: "CFG",
+        group: "IR A",
+        hint: "F6",
+        icon: Settings,
+        run: go("/settings"),
+      },
       {
         id: "act-refresh",
         label: "ACTUALIZAR PRECIOS",
@@ -122,8 +188,8 @@ export function CommandPalette({ pinEnabled }: { pinEnabled: boolean }) {
         icon: LockKeyhole,
         run: async () => {
           await logout();
-                // The cached dashboard belongs to that session.
-                await purgeOfflineCache();
+          // The cached dashboard belongs to that session.
+          await purgeOfflineCache();
           window.location.assign("/login");
         },
       });
@@ -151,12 +217,17 @@ export function CommandPalette({ pinEnabled }: { pinEnabled: boolean }) {
         setOpen(false);
         return;
       }
-      const fn = /^F([1-5])$/.exec(e.key);
+      const fn = /^F([1-6])$/.exec(e.key);
       if (fn && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
-        const to = ["/", "/assets", "/cash", "/cashflow", "/settings"][
-          Number(fn[1]) - 1
-        ];
+        const to = [
+          "/",
+          "/assets",
+          "/cash",
+          "/cashflow",
+          "/reportes",
+          "/settings",
+        ][Number(fn[1]) - 1];
         setOpen(false);
         void router.navigate({ to });
       }

@@ -2,6 +2,7 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import {
   ArrowLeftRight,
   Briefcase,
+  FileBarChart,
   HelpCircle,
   LayoutDashboard,
   LogOut,
@@ -24,7 +25,8 @@ const nav = [
   { to: "/assets", label: "POS", key: "F2", icon: Briefcase },
   { to: "/cash", label: "CASH", key: "F3", icon: Wallet },
   { to: "/cashflow", label: "FLUJO", key: "F4", icon: ArrowLeftRight },
-  { to: "/settings", label: "CFG", key: "F5", icon: Settings },
+  { to: "/reportes", label: "REPORT", key: "F5", icon: FileBarChart },
+  { to: "/settings", label: "CFG", key: "F6", icon: Settings },
 ] as const;
 
 function useClock() {
@@ -63,7 +65,8 @@ function PriceStatus({ lastPriceRun }: { lastPriceRun: string | null }) {
 
   if (!lastPriceRun) return <span className="text-subtle">SIN PRECIOS</span>;
   const ms = now - Date.parse(lastPriceRun);
-  if (!Number.isFinite(ms)) return <span className="text-subtle">SIN PRECIOS</span>;
+  if (!Number.isFinite(ms))
+    return <span className="text-subtle">SIN PRECIOS</span>;
 
   const mins = Math.max(0, Math.round(ms / 60_000));
   const label =
