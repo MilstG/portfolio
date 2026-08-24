@@ -1155,6 +1155,41 @@ export const getPriceStatus = createServerFn({ method: "GET" })
   .middleware([requireAuth])
   .handler(async () => ({ lastPriceRun: await lastPriceRun() }));
 
+/**
+ * The once-a-minute heartbeat: trigger the throttled refresh, and report
+ * whether anything on screen actually moved.
+ *
+ * The tick used to re-run the whole portfolio loader, which meant a full
+ * payload query every minute for every open tab — almost always to redraw the
+ * exact same numbers. This asks the cheap question instead, and the client only
+ * pays for a real reload when the answer changes.
+ *
+ * `pulse` is a change detector, not a value: a sum can in principle collide
+ * with a different set of positions adding to the same figure, and the cost of
+ * that is one skipped screen update, corrected by the next real change. It is
+ * not used for anything a number is used for.
+ */
+export const pricePulse = createServerFn({ method: "GET" })
+  .middleware([requireAuth])
+  .handler(async () => {
+    // Not awaited: the pass runs in the background and its result shows up on
+    // a later beat, same as it did from the portfolio loader.
+    void maybeRefreshPricesInBackground();
+    const sql = await getSql();
+    const [assetRow, fxRow] = await Promise.all([
+      sql.query<{ v: unknown }>(
+        `select coalesce(sum(current_value), 0) as v from assets`,
+      ),
+      sql.query<{ f: unknown }>(
+        `select official + blue + mep as f from fx_rates where id = 1`,
+      ),
+    ]);
+    return {
+      pulse: `${num(assetRow[0]?.v)}|${num(fxRow[0]?.f)}`,
+      lastPriceRun: await lastPriceRun(),
+    };
+  });
+
 export const refreshPrices = createServerFn({ method: "POST" })
   .middleware([requireAuth])
   .handler(async () => runPriceRefresh());

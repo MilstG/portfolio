@@ -10,7 +10,7 @@ import {
   Settings,
   Wallet,
 } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   CommandPalette,
   openCommandPalette,
@@ -18,6 +18,7 @@ import {
 import { useHints } from "@/components/ui/hints";
 import { logout } from "@/lib/server/auth";
 import { purgeOfflineCache } from "@/lib/pwa";
+import { pricePulse } from "@/lib/server/portfolio";
 import { cn } from "@/lib/utils";
 
 const nav = [
@@ -92,12 +93,16 @@ function PriceStatus({ lastPriceRun }: { lastPriceRun: string | null }) {
 /**
  * Re-fetch on a timer so an open tab keeps up with the market.
  *
- * The refresh itself is triggered server-side from the portfolio loader, which
- * only runs on navigation — without this, "crypto refreshes every minute" was
- * true only for someone who kept reloading the page. Each tick re-runs the
- * loaders, which is what gives the server the chance to fire its throttled
- * background pass; the tick after that shows the result, so a quote on screen
- * is at most one interval old.
+ * The refresh itself is triggered server-side, and the server only gets asked
+ * on navigation — without this, "crypto refreshes every minute" was true only
+ * for someone who kept reloading the page.
+ *
+ * Each beat calls one small endpoint that fires the throttled pass and reports
+ * whether anything moved; the loaders are re-run only when something did. The
+ * first version re-ran them on every beat, which meant a full portfolio query
+ * per minute per open tab, almost always to redraw identical numbers. A quote
+ * on screen is still at most one interval old, because the pass lands after
+ * the beat that started it and shows up on the next one.
  *
  * Paused while the tab is hidden and refreshed the moment it comes back: a
  * dashboard nobody is looking at should not be spending API calls, and coming
@@ -106,16 +111,32 @@ function PriceStatus({ lastPriceRun }: { lastPriceRun: string | null }) {
  */
 function useLiveRefresh(seconds = 60) {
   const router = useRouter();
+  // Baseline for "did anything move". Taken at mount rather than on the first
+  // beat: the page has just loaded fresh numbers, so that reading is the
+  // baseline — waiting for a beat to establish it left the first real change
+  // needing two intervals to appear, and made a freshly loaded page reload
+  // itself once for no reason.
+  const previous = useRef<string | null>(null);
   useEffect(() => {
     if (seconds <= 0) return;
     let timer: ReturnType<typeof setInterval> | null = null;
-    const tick = () => {
+    let stopped = false;
+    const tick = async () => {
       if (document.visibilityState !== "visible") return;
-      void router.invalidate();
+      try {
+        const { pulse } = await pricePulse();
+        if (stopped) return;
+        const changed = previous.current !== null && pulse !== previous.current;
+        previous.current = pulse;
+        if (changed) void router.invalidate();
+      } catch {
+        // A dropped beat is not worth a toast: the next one covers it, and an
+        // error here would fire once a minute for as long as the tab is open.
+      }
     };
     const start = () => {
       if (timer) return;
-      timer = setInterval(tick, seconds * 1000);
+      timer = setInterval(() => void tick(), seconds * 1000);
     };
     const stop = () => {
       if (!timer) return;
@@ -124,15 +145,19 @@ function useLiveRefresh(seconds = 60) {
     };
     const onVisibility = () => {
       if (document.visibilityState === "visible") {
-        tick();
+        void tick();
         start();
       } else {
         stop();
       }
     };
-    if (document.visibilityState === "visible") start();
+    if (document.visibilityState === "visible") {
+      void tick();
+      start();
+    }
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
+      stopped = true;
       stop();
       document.removeEventListener("visibilitychange", onVisibility);
     };
